@@ -485,17 +485,31 @@ def gemini_generate_image(
             parts = [types.Part.from_text(text=prompt)]
             if reference_images:
                 for img in reference_images:
-                    # The from_image helper was removed. We now use from_uri
-                    # for GCS paths.
-                    # The mime_type is automatically inferred by the SDK if
-                    # not provided.
-                    if img.gcs_uri:
+                    if img.image_bytes:
                         parts.append(
-                            types.Part.from_uri(
-                                file_uri=img.gcs_uri,
-                                mime_type=img.mime_type,
+                            types.Part.from_bytes(
+                                data=img.image_bytes,
+                                mime_type=img.mime_type or "image/png",
                             ),
                         )
+                    elif img.gcs_uri:
+                        img_bytes = gcs_service.download_bytes_from_gcs(
+                            img.gcs_uri
+                        )
+                        if img_bytes:
+                            parts.append(
+                                types.Part.from_bytes(
+                                    data=img_bytes,
+                                    mime_type=img.mime_type or "image/png",
+                                ),
+                            )
+                        else:
+                            parts.append(
+                                types.Part.from_uri(
+                                    file_uri=img.gcs_uri,
+                                    mime_type=img.mime_type,
+                                ),
+                            )
 
             contents: list[types.ContentUnionDict] = [
                 types.Content(role="user", parts=parts),
@@ -1730,7 +1744,23 @@ class ImagenService:
         client = GenAIModelSetup.init()
         try:
             # --- Step 1: Perform the Upscale API Call ---
-            image_for_api = types.Image(gcs_uri=request_dto.user_image)
+            if request_dto.user_image and request_dto.user_image.startswith(
+                "gs://"
+            ):
+                image_bytes = await asyncio.to_thread(
+                    self.gcs_service.download_bytes_from_gcs,
+                    request_dto.user_image,
+                )
+                if image_bytes:
+                    image_for_api = types.Image(
+                        image_bytes=image_bytes,
+                        mime_type=request_dto.mime_type
+                        or MimeTypeEnum.IMAGE_PNG,
+                    )
+                else:
+                    image_for_api = types.Image(gcs_uri=request_dto.user_image)
+            else:
+                image_for_api = types.Image(gcs_uri=request_dto.user_image)
 
             response = client.models.upscale_image(
                 model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW.value,
