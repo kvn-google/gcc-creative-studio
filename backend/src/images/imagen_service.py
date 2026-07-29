@@ -1743,24 +1743,9 @@ class ImagenService:
         """Upscale an image."""
         client = GenAIModelSetup.init()
         try:
+            logger.info("-----kvn request_dto %s", request_dto.user_image)
             # --- Step 1: Perform the Upscale API Call ---
-            if request_dto.user_image and request_dto.user_image.startswith(
-                "gs://"
-            ):
-                image_bytes = await asyncio.to_thread(
-                    self.gcs_service.download_bytes_from_gcs,
-                    request_dto.user_image,
-                )
-                if image_bytes:
-                    image_for_api = types.Image(
-                        image_bytes=image_bytes,
-                        mime_type=request_dto.mime_type
-                        or MimeTypeEnum.IMAGE_PNG,
-                    )
-                else:
-                    image_for_api = types.Image(gcs_uri=request_dto.user_image)
-            else:
-                image_for_api = types.Image(gcs_uri=request_dto.user_image)
+            image_for_api = types.Image(gcs_uri=request_dto.user_image)
 
             response = client.models.upscale_image(
                 model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW.value,
