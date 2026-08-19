@@ -35,6 +35,8 @@ class GenAIModelSetup:
     """
 
     _client: Client | None = None
+    _global_client: Client | None = None
+    _omni_client: Client | None = None
 
     @classmethod
     def get_client(cls) -> Client:
@@ -66,7 +68,61 @@ class GenAIModelSetup:
                 raise
         return cls._client
 
-    _omni_client: Client | None = None
+    @classmethod
+    def get_global_client(cls) -> Client:
+        """Initializes and returns a shared global GenAI client instance for Gemini models."""
+        if cls._global_client is None:
+            try:
+                config = config_service
+                project_id = config.PROJECT_ID
+                if project_id is None:
+                    raise ValueError("Project ID must be set.")
+
+                logger.info(
+                    f"Initializing shared global GenAI client for project '{project_id}' in location 'global'",
+                )
+
+                cls._global_client = Client(
+                    vertexai=config.INIT_VERTEX,
+                    project=project_id,
+                    location="global",
+                    http_options={
+                        "headers": {
+                            "user-agent": f"creative-studio/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
+                        }
+                    },
+                )
+            except Exception as e:
+                logger.error("Failed to initialize global GenAI client: %s", e)
+                raise
+        return cls._global_client
+
+    @classmethod
+    def get_regional_client(cls, location: str | None = None) -> Client:
+        """Initializes and returns a shared regional GenAI client instance for regional models (e.g. Imagen, Veo)."""
+        loc = location or (
+            config_service.LOCATION
+            if config_service.LOCATION != "global"
+            else "us-central1"
+        )
+        if loc == config_service.LOCATION and cls._client is not None:
+            return cls._client
+        try:
+            config = config_service
+            project_id = config.PROJECT_ID
+            return Client(
+                vertexai=config.INIT_VERTEX,
+                project=project_id,
+                location=loc,
+                http_options={
+                    "headers": {
+                        "user-agent": f"creative-studio/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
+                    }
+                },
+            )
+        except Exception as e:
+            logger.error("Failed to initialize regional GenAI client: %s", e)
+            raise
 
     @classmethod
     def get_omni_client(cls) -> Client:

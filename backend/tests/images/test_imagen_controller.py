@@ -138,7 +138,7 @@ def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
         user_email="test@example.com",
         mime_type=MimeTypeEnum.IMAGE_PNG,
         status=JobStatusEnum.PROCESSING,
-        model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
+        model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         gcs_uris=[],
         presigned_urls=[],
         aspect_ratio="1:1",
