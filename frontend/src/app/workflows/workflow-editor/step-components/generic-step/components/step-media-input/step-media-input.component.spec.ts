@@ -19,6 +19,7 @@ import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {FormControl, ReactiveFormsModule} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatMenuModule} from '@angular/material/menu';
+import {of} from 'rxjs';
 import {SourceAssetService} from '../../../../../../common/services/source-asset.service';
 import {StepMediaInputComponent} from './step-media-input.component';
 
@@ -51,6 +52,9 @@ describe('StepMediaInputComponent', () => {
       'uploadAsset',
     ]);
     mockDialog = jasmine.createSpyObj('MatDialog', ['open']);
+    mockDialog.open.and.returnValue({
+      afterClosed: () => of(null),
+    } as any);
 
     await TestBed.configureTestingModule({
       declarations: [StepMediaInputComponent],
@@ -257,6 +261,39 @@ describe('StepMediaInputComponent', () => {
           previewUrl: 'https://example.com/1.png',
         }),
       ).toBeFalse();
+    });
+  });
+
+  describe('openImageSelectorForReference with video and audio types', () => {
+    it('should configure dialog for video type', () => {
+      component.type = 'video';
+      component.control.setValue(null);
+      component.openImageSelectorForReference();
+
+      expect(mockDialog.open).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            mimeType: 'video/mp4',
+            assetType: 'generic_video',
+          }),
+        }),
+      );
+    });
+
+    it('should configure dialog for audio type', () => {
+      component.type = 'audio';
+      component.control.setValue(null);
+      component.openImageSelectorForReference();
+
+      expect(mockDialog.open).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            mimeType: 'audio/*',
+          }),
+        }),
+      );
     });
   });
 });

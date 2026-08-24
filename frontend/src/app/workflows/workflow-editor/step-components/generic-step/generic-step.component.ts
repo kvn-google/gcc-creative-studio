@@ -441,16 +441,24 @@ export class GenericStepComponent implements OnInit, OnChanges {
       // Logic for specific inputs
       if (
         this.localConfig.type === 'generate-video' &&
-        (input.name === 'input_images' || input.name === 'reference_images')
+        (input.name === 'input_images' ||
+          input.name === 'reference_images' ||
+          input.name === 'input_video' ||
+          input.name === 'input_audio')
       ) {
         const showIngredients = currentMode === 'Ingredients to Video';
+        const isImageRef =
+          input.name === 'input_images' || input.name === 'reference_images';
+        const isVisible = isImageRef
+          ? showIngredients && maxRefs > 0
+          : showIngredients;
 
-        if (showIngredients && maxRefs > 0) {
+        if (isVisible) {
           input.hidden = false;
           this.stepForm.get('inputs')?.get(input.name)?.enable();
           // Force mixed mode for list inputs if they are enabled
           const short = getShortType(input.type);
-          if (short === 'IMG' || short === 'VID') {
+          if (short === 'IMG' || short === 'VID' || short === 'AUD') {
             this.inputModes[input.name] = 'mixed';
           }
         } else {
@@ -462,7 +470,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
           input.hidden = false;
           this.stepForm.get('inputs')?.get(input.name)?.enable();
           const short = getShortType(input.type);
-          if (short === 'IMG' || short === 'VID') {
+          if (short === 'IMG' || short === 'VID' || short === 'AUD') {
             this.inputModes[input.name] = 'mixed';
           }
         } else {
@@ -472,7 +480,10 @@ export class GenericStepComponent implements OnInit, OnChanges {
       } else {
         // Default for other inputs: if it allows multiple, set to mixed
         const short = getShortType(input.type);
-        if ((short === 'IMG' || short === 'VID') && maxRefs > 1) {
+        if (
+          (short === 'IMG' || short === 'VID' || short === 'AUD') &&
+          maxRefs > 1
+        ) {
           this.inputModes[input.name] = 'mixed';
         }
       }

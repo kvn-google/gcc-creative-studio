@@ -39,7 +39,7 @@ import {isInputAlreadyLinked} from '../../../../../utils/workflow-magnetic.util'
 export class StepMediaInputComponent implements OnInit {
   @Input() control!: AbstractControl;
   @Input() inputName!: string;
-  @Input() type: 'image' | 'video' = 'image';
+  @Input() type: 'image' | 'video' | 'audio' = 'image';
   @Input() maxItems = 1;
   @Input() compatibleOutputs: any[] = [];
   @Input() showValidationErrors = false;
@@ -110,6 +110,7 @@ export class StepMediaInputComponent implements OnInit {
 
     let mimeType = 'image/*';
     if (this.type === 'video') mimeType = 'video/mp4';
+    if (this.type === 'audio') mimeType = 'audio/*';
 
     const dialogRef = this.dialog.open(ImageSelectorComponent, {
       width: '90vw',
