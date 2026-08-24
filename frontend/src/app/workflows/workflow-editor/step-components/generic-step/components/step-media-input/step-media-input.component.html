@@ -26,11 +26,11 @@
     <div *ngFor="let item of items; let i = index" 
          class="relative h-20 w-20 flex-shrink-0 group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-800">
       
-      <!-- Case 1: Fixed Image/Video -->
+      <!-- Case 1: Fixed Image/Video/Audio -->
       <ng-container *ngIf="!isStepOutputReference(item)">
-        <img *ngIf="$any(item).previewUrl" [src]="$any(item).previewUrl" class="h-full w-full object-cover" />
-        <div *ngIf="!$any(item).previewUrl" class="h-full w-full flex items-center justify-center">
-          <mat-icon class="text-neutral-500">{{ type === 'video' ? 'video' : 'image' }}</mat-icon>
+        <img *ngIf="type !== 'audio' && $any(item).previewUrl" [src]="$any(item).previewUrl" class="h-full w-full object-cover" />
+        <div *ngIf="type === 'audio' || !$any(item).previewUrl" class="h-full w-full flex items-center justify-center">
+          <mat-icon class="text-neutral-500">{{ type === 'video' ? 'video_library' : (type === 'audio' ? 'audiotrack' : 'image') }}</mat-icon>
         </div>
       </ng-container>
 
@@ -60,9 +60,9 @@
     <div 
       class="h-10 w-10 flex flex-col items-center justify-center cursor-pointer rounded-lg border-2 border-dashed border-neutral-700 hover:border-neutral-500 hover:bg-neutral-800 transition-colors gap-1"
       (click)="openImageSelectorForReference()"
-      matTooltip="Add {{ type === 'video' ? 'Video' : 'Image' }}">
+      [matTooltip]="'Add ' + (type === 'video' ? 'Video' : (type === 'audio' ? 'Audio' : 'Image'))">
       <mat-icon class="text-neutral-400 !w-5 !h-5 !text-xl">{{ type === 'video' ? 'video_library' :
-        'add_photo_alternate' }}</mat-icon>
+        (type === 'audio' ? 'audiotrack' : 'add_photo_alternate') }}</mat-icon>
     </div>
   
     <!-- Add Linked -->

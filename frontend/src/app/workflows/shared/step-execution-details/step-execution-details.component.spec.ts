@@ -190,9 +190,9 @@ describe('StepExecutionDetailsComponent', () => {
     });
   });
 
-  describe('Legacy Image Step Types', () => {
-    it('should infer edit_image mode for legacy edit_image string stepType', () => {
-      component.stepType = 'edit_image';
+  describe('Image Step Modes', () => {
+    it('should filter inputs and outputs for edit_image mode', () => {
+      component.stepType = NodeTypes.IMAGE;
       component.mode = 'edit_image';
       component.inputs = {
         prompt: 'Edit prompt',
@@ -213,8 +213,8 @@ describe('StepExecutionDetailsComponent', () => {
       });
     });
 
-    it('should infer upscale_image mode for legacy upscale_image string stepType', () => {
-      component.stepType = 'upscale_image';
+    it('should filter inputs and outputs for upscale_image mode', () => {
+      component.stepType = NodeTypes.IMAGE;
       component.mode = 'upscale_image';
       component.inputs = {
         prompt: null,
@@ -243,7 +243,7 @@ describe('StepExecutionDetailsComponent', () => {
         extra_unknown_field: 'ignored',
       };
       component.outputs = {
-        text: 'Generated text article',
+        generated_text: 'Generated text article',
         extra_output: 'ignored',
       };
       fixture.detectChanges();
@@ -252,7 +252,7 @@ describe('StepExecutionDetailsComponent', () => {
         prompt: 'Generate an article',
       });
       expect(component.filteredOutputs).toEqual({
-        text: 'Generated text article',
+        generated_text: 'Generated text article',
       });
     });
   });
