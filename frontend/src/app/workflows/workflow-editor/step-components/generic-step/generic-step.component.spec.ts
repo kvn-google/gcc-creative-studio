@@ -467,7 +467,129 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         {value: 4, label: '4s'},
         {value: 6, label: '6s'},
         {value: 8, label: '8s'},
+        {value: 10, label: '10s'},
       ]);
+    });
+  });
+
+  describe('Video Node Ingredients Mode Reference Ports', () => {
+    let videoStepForm: FormGroup;
+
+    beforeEach(() => {
+      videoStepForm = fb.group({
+        stepId: ['video_step_ingredients'],
+        type: ['generate-video'],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['A dramatic movie scene'],
+          input_images: [null],
+          input_video: [null],
+          input_audio: [null],
+          start_frame: [null],
+          end_frame: [null],
+        }),
+        settings: fb.group({
+          model: ['veo-3.1-generate-001'],
+          input_mode: ['Text to Video'],
+          aspect_ratio: ['16:9'],
+          duration_seconds: [8],
+          brand_guidelines: [false],
+        }),
+        outputs: fb.group({
+          generated_video: [{type: 'video'}],
+        }),
+      });
+
+      component.stepForm = videoStepForm;
+      component.config = GENERATE_VIDEO_STEP_CONFIG;
+      component.ngOnInit();
+    });
+
+    it('should hide and disable input_video and input_audio when input_mode is Text to Video', () => {
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+      const inputAudio = component.localConfig.inputs.find(
+        i => i.name === 'input_audio',
+      );
+      const inputImages = component.localConfig.inputs.find(
+        i => i.name === 'input_images',
+      );
+
+      expect(inputVideo?.hidden).toBeTrue();
+      expect(inputAudio?.hidden).toBeTrue();
+      expect(inputImages?.hidden).toBeTrue();
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_images')?.disabled).toBeTrue();
+    });
+
+    it('should show and enable input_video, input_audio, and input_images when input_mode is Ingredients to Video', () => {
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+      const inputAudio = component.localConfig.inputs.find(
+        i => i.name === 'input_audio',
+      );
+      const inputImages = component.localConfig.inputs.find(
+        i => i.name === 'input_images',
+      );
+
+      expect(inputVideo?.hidden).toBeFalse();
+      expect(inputAudio?.hidden).toBeFalse();
+      expect(inputImages?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.input_video')?.enabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_audio')?.enabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_images')?.enabled).toBeTrue();
+
+      expect(component.inputModes['input_video']).toBe('mixed');
+      expect(component.inputModes['input_audio']).toBe('mixed');
+      expect(component.inputModes['input_images']).toBe('mixed');
+    });
+
+    it('should hide and disable ingredient ports when switching to Frames to Video', () => {
+      // First switch to Ingredients to Video
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+      expect(
+        component.localConfig.inputs.find(i => i.name === 'input_video')
+          ?.hidden,
+      ).toBeFalse();
+
+      // Switch to Frames to Video
+      videoStepForm.get('settings.input_mode')?.setValue('Frames to Video');
+
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+      const inputAudio = component.localConfig.inputs.find(
+        i => i.name === 'input_audio',
+      );
+      const inputImages = component.localConfig.inputs.find(
+        i => i.name === 'input_images',
+      );
+      const startFrame = component.localConfig.inputs.find(
+        i => i.name === 'start_frame',
+      );
+      const endFrame = component.localConfig.inputs.find(
+        i => i.name === 'end_frame',
+      );
+
+      expect(inputVideo?.hidden).toBeTrue();
+      expect(inputAudio?.hidden).toBeTrue();
+      expect(inputImages?.hidden).toBeTrue();
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+
+      expect(startFrame?.hidden).toBeFalse();
+      expect(endFrame?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.start_frame')?.enabled).toBeTrue();
+      expect(videoStepForm.get('inputs.end_frame')?.enabled).toBeTrue();
     });
   });
 });
