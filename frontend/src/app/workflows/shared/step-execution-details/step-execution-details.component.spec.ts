@@ -275,5 +275,18 @@ describe('StepExecutionDetailsComponent', () => {
         4, 5,
       ]);
     });
+
+    it('should format display values correctly', () => {
+      expect(component.formatDisplayValue('A prompt text')).toBe(
+        'A prompt text',
+      );
+      expect(component.formatDisplayValue(123)).toBe('123');
+      expect(component.formatDisplayValue(true)).toBe('true');
+      expect(component.formatDisplayValue(null)).toBe('');
+      expect(component.formatDisplayValue(undefined)).toBe('');
+      expect(component.formatDisplayValue({key: 'val'})).toBe(
+        '{\n  "key": "val"\n}',
+      );
+    });
   });
 });
