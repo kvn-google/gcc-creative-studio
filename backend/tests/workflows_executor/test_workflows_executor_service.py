@@ -277,6 +277,7 @@ async def test_generate_video(service):
     request.inputs.start_frame = None
     request.inputs.end_frame = None
     request.config.model = "veo-3.1-generate-001"
+    request.config.aspect_ratio = "16:9"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 6
@@ -292,10 +293,43 @@ async def test_generate_video(service):
         assert result["generated_video"] == 777
         service.mock_rest_client.post.assert_called_once()
         _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["aspect_ratio"] == "16:9"
         assert kwargs["json"]["duration_seconds"] == 6
         assert kwargs["json"]["reference_video"] is None
         assert kwargs["json"]["reference_audio"] is None
         mock_poll.assert_called_once_with(777, None)
+
+
+@pytest.mark.anyio
+async def test_generate_vertical_video(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A vertical story video"
+    request.inputs.input_images = None
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.config.model = "veo-3.1-generate-001"
+    request.config.aspect_ratio = "9:16"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 888})
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 888
+        service.mock_rest_client.post.assert_called_once()
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["aspect_ratio"] == "9:16"
+        assert kwargs["json"]["duration_seconds"] == 8
+        mock_poll.assert_called_once_with(888, None)
 
 
 @pytest.mark.anyio
@@ -309,6 +343,7 @@ async def test_generate_video_with_reference_video_and_audio(service):
     request.inputs.start_frame = None
     request.inputs.end_frame = None
     request.config.model = "veo-3.1-generate-001"
+    request.config.aspect_ratio = "16:9"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
@@ -326,6 +361,7 @@ async def test_generate_video_with_reference_video_and_audio(service):
         assert result["generated_video"] == 1234
         service.mock_rest_client.post.assert_called_once()
         _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["aspect_ratio"] == "16:9"
         assert kwargs["json"]["reference_video"] == {
             "id": 888,
             "type": "media_item",
@@ -366,6 +402,7 @@ async def test_generate_video_with_source_asset_video_and_audio(service):
     request.inputs.start_frame = None
     request.inputs.end_frame = None
     request.config.model = "veo-3.1-generate-001"
+    request.config.aspect_ratio = "16:9"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
@@ -382,6 +419,7 @@ async def test_generate_video_with_source_asset_video_and_audio(service):
         result = await service.generate_video(request)
         assert result["generated_video"] == 5678
         _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["aspect_ratio"] == "16:9"
         assert kwargs["json"]["reference_video"] == {
             "id": 501,
             "type": "media_item",
