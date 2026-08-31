@@ -14,6 +14,7 @@
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -260,7 +261,24 @@ class WorkflowsExecutorService:
         logger.info("generate_text inputs: %s", request.inputs)
         # 1. Add Text Prompt
         if isinstance(request.inputs.prompt, str):
-            contents.append(types.Part.from_text(text=request.inputs.prompt))
+            prompt_text = request.inputs.prompt
+            inputs_dict = request.inputs.model_dump()
+
+            def replace_var(match: re.Match) -> str:
+                var_name = match.group(1)
+                val = inputs_dict.get(var_name)
+                if val is None:
+                    return ""
+                if isinstance(val, dict):
+                    return str(
+                        val.get("generated_text") or val.get("text") or ""
+                    )
+                return str(val)
+
+            resolved_prompt = re.sub(
+                r"<([a-zA-Z0-9_]+)>", replace_var, prompt_text
+            )
+            contents.append(types.Part.from_text(text=resolved_prompt))
 
         # 2. Add Images
         if request.inputs.input_images:

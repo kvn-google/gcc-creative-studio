@@ -592,4 +592,70 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       output: 'User Video',
     });
   });
+
+  it('should allow connection from text source to dynamic prompt variable input in onPortDrop', () => {
+    const textStepForm = fb.group({
+      stepId: ['step_text_node'],
+      type: ['generate-text'],
+      inputs: fb.group({
+        prompt: ['A <animal> wearing a <hat>'],
+        animal: [null],
+        hat: [null],
+      }),
+    });
+    component.stepsArray.push(textStepForm);
+
+    component.dragSourcePort = {
+      stepId: 'step_text_source',
+      outputName: 'generated_text',
+      type: 'text',
+    };
+
+    component.onPortDrop(
+      {stepId: 'step_text_node', inputName: 'animal'},
+      'step_text_node',
+    );
+
+    expect(component.dragSourcePort).toBeNull();
+    expect(textStepForm.get('inputs')?.get('animal')?.value as any).toEqual({
+      step: 'step_text_source',
+      output: 'generated_text',
+    });
+  });
+
+  it('should not save dynamic prompt variables in prepareSteps when prompt is linked', () => {
+    const formValue = {
+      name: 'Test Workflow',
+      description: 'Test description',
+      userInput: {
+        outputs: {},
+      },
+      steps: [
+        {
+          stepId: 'text_step_linked',
+          type: 'generate-text',
+          inputs: {
+            prompt: {step: 'upstream_step', output: 'generated_text'},
+            animal: 'Lion',
+            input_images: null,
+            input_videos: null,
+          },
+          settings: {model: 'gemini-3-flash-preview'},
+          outputs: {generated_text: {type: 'text'}},
+        },
+      ],
+    };
+
+    const preparedSteps = (component as any).prepareSteps(formValue);
+    const textStep = preparedSteps.find(
+      (s: any) => s.stepId === 'text_step_linked',
+    );
+    expect(textStep.inputs.prompt).toEqual({
+      step: 'upstream_step',
+      output: 'generated_text',
+    });
+    // 'animal' dynamic variable should be omitted from saved step inputs
+    expect(textStep.inputs.animal).toBeUndefined();
+    expect(textStep.inputs.input_images).toBeNull();
+  });
 });

@@ -31,7 +31,7 @@ import {
   isGeminiOmniModel,
 } from '../../../../common/config/model-config';
 import {StepConfig, StepInput, StepSetting} from './step.model';
-import {StepStatusEnum} from '../../../workflow.models';
+import {StepOutputReference, StepStatusEnum} from '../../../workflow.models';
 import {
   DragSourcePort,
   getMaxAllowedInputs,
@@ -83,6 +83,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   isCollapsed = false;
   inputModes: {[key: string]: 'fixed' | 'linked' | 'mixed'} = {};
   compatibleOutputs: {[key: string]: any[]} = {};
+  newVariableName = '';
 
   constructor(private fb: FormBuilder) {}
 
@@ -113,6 +114,13 @@ export class GenericStepComponent implements OnInit, OnChanges {
   }
 
   isInputDisabled(inputName: string): boolean {
+    if (
+      this.localConfig?.type === 'generate-text' &&
+      !this.isBasePortCollision(inputName) &&
+      this.inputModes['prompt'] !== 'fixed'
+    ) {
+      return true;
+    }
     return !!this.stepForm?.get('inputs')?.get(inputName)?.disabled;
   }
 
@@ -161,7 +169,14 @@ export class GenericStepComponent implements OnInit, OnChanges {
   }
 
   getInputDisabledMessage(inputName: string): string {
-    if (this.localConfig.type === 'generate-video') {
+    if (
+      this.localConfig?.type === 'generate-text' &&
+      !this.isBasePortCollision(inputName) &&
+      this.inputModes['prompt'] !== 'fixed'
+    ) {
+      return 'Prompt is linked - variables inactive';
+    }
+    if (this.localConfig?.type === 'generate-video') {
       const currentModel = this.stepForm?.get('settings.model')?.value;
       if (!isGeminiOmniModel(currentModel)) {
         if (inputName === 'input_audio') {
@@ -255,6 +270,37 @@ export class GenericStepComponent implements OnInit, OnChanges {
         this.inputModes[input.name] = 'fixed';
       }
     });
+
+    if (this.localConfig.type === 'generate-text') {
+      const baseInputNames = new Set(this.config.inputs.map(i => i.name));
+      Object.keys(inputs.controls).forEach(controlName => {
+        if (!baseInputNames.has(controlName)) {
+          const exists = this.localConfig.inputs.some(
+            i => i.name === controlName,
+          );
+          if (!exists) {
+            this.localConfig.inputs.push({
+              name: controlName,
+              label: controlName,
+              type: 'text',
+              required: false,
+            });
+          }
+          if (!this.inputModes[controlName]) {
+            const val = inputs.get(controlName)?.value;
+            const isLinked =
+              val &&
+              typeof val === 'object' &&
+              !Array.isArray(val) &&
+              'step' in val &&
+              'output' in val;
+            this.inputModes[controlName] = isLinked ? 'linked' : 'fixed';
+          }
+        }
+      });
+      const promptVal = inputs.get('prompt')?.value;
+      this.updatePromptVariables(promptVal);
+    }
 
     if (this.inputsSubscription) {
       this.inputsSubscription.unsubscribe();
@@ -631,6 +677,118 @@ export class GenericStepComponent implements OnInit, OnChanges {
     this.updateCompatibleOutputs();
   }
 
+  getBaseInputs(): StepInput[] {
+    return this.config?.inputs || [];
+  }
+
+  getVariableInputs(): StepInput[] {
+    if (this.localConfig?.type !== 'generate-text') return [];
+    const baseInputNames = new Set(
+      (this.config?.inputs || []).map(i => i.name),
+    );
+    return (this.localConfig?.inputs || []).filter(
+      i => !baseInputNames.has(i.name),
+    );
+  }
+
+  isBasePortCollision(varName: string): boolean {
+    return (this.config?.inputs || []).some(i => i.name === varName);
+  }
+
+  isVariableUsedInPrompt(varName: string): boolean {
+    const promptVal = this.stepForm?.get('inputs.prompt')?.value;
+    if (typeof promptVal !== 'string') return false;
+    return promptVal.includes(`<${varName}>`);
+  }
+
+  appendToPrompt(varName: string): void {
+    const promptControl = this.stepForm?.get('inputs.prompt');
+    if (!promptControl) return;
+
+    const currentVal = (promptControl.value || '').toString().trim();
+    const placeholder = `<${varName}>`;
+    const newVal = currentVal ? `${currentVal} ${placeholder}` : placeholder;
+
+    promptControl.setValue(newVal);
+    promptControl.markAsDirty();
+    this.updatePromptVariables(newVal);
+  }
+
+  isValidNewVariableName(): boolean {
+    const name = this.newVariableName?.trim();
+    if (!name) return false;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return false;
+    if (this.isBasePortCollision(name)) return false;
+    if (this.localConfig?.inputs?.some(i => i.name === name)) return false;
+    return true;
+  }
+
+  addCustomVariable(): void {
+    const name = this.newVariableName?.trim();
+    if (!name || !this.isValidNewVariableName()) return;
+    this.addVariable(name);
+    this.newVariableName = '';
+  }
+
+  addVariable(name?: string): void {
+    if (this.localConfig?.type !== 'generate-text') return;
+    const inputs = this.stepForm?.get('inputs') as FormGroup;
+    if (!inputs) return;
+
+    let varName = name?.trim();
+    if (!varName) {
+      let idx = 1;
+      const existingNames = new Set(
+        (this.localConfig?.inputs || []).map(i => i.name),
+      );
+      while (
+        existingNames.has(`variable_${idx}`) ||
+        this.isBasePortCollision(`variable_${idx}`)
+      ) {
+        idx++;
+      }
+      varName = `variable_${idx}`;
+    } else {
+      if (
+        !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(varName) ||
+        this.isBasePortCollision(varName)
+      ) {
+        return;
+      }
+      if (this.localConfig.inputs.some(i => i.name === varName)) {
+        return;
+      }
+    }
+
+    const newInput: StepInput = {
+      name: varName,
+      label: varName,
+      type: 'text',
+      required: false,
+    };
+
+    this.localConfig.inputs = [...this.localConfig.inputs, newInput];
+    if (!inputs.contains(varName)) {
+      inputs.addControl(varName, this.fb.control(null));
+    }
+    this.inputModes[varName] = 'fixed';
+    this.updateCompatibleOutputs();
+  }
+
+  removeVariable(varName: string): void {
+    if (this.isBasePortCollision(varName)) return;
+    const inputs = this.stepForm?.get('inputs') as FormGroup;
+    this.localConfig.inputs = this.localConfig.inputs.filter(
+      i => i.name !== varName,
+    );
+    if (inputs?.contains(varName)) {
+      inputs.removeControl(varName);
+    }
+    delete this.inputModes[varName];
+    delete this.compatibleOutputs[varName];
+    this.updateCompatibleOutputs();
+  }
+
   toggleInputMode(inputName: string, mode: 'fixed' | 'linked' | 'mixed') {
     this.inputModes[inputName] = mode;
     this.stepForm.get('inputs')?.get(inputName)?.setValue(null);
@@ -638,5 +796,64 @@ export class GenericStepComponent implements OnInit, OnChanges {
 
   getModeSetting(): StepSetting | undefined {
     return this.localConfig?.settings?.find(s => s.name === 'mode');
+  }
+
+  onInputFieldBlur(inputName: string): void {
+    if (inputName === 'prompt' && this.localConfig.type === 'generate-text') {
+      const promptVal = this.stepForm.get('inputs.prompt')?.value;
+      this.updatePromptVariables(promptVal);
+    }
+  }
+
+  updatePromptVariables(
+    promptValue: string | StepOutputReference | null | undefined,
+  ): void {
+    if (this.localConfig.type !== 'generate-text') return;
+    const inputs = this.stepForm?.get('inputs') as FormGroup;
+    if (!inputs) return;
+
+    let uniqueVars: string[] = [];
+    if (typeof promptValue === 'string') {
+      const matches = Array.from(
+        promptValue.matchAll(/<([a-zA-Z0-9_]+)>/g),
+        m => m[1],
+      );
+      uniqueVars = Array.from(new Set(matches));
+    }
+
+    const baseInputs = this.config.inputs;
+    const baseInputNames = new Set(baseInputs.map(i => i.name));
+
+    // Add any newly discovered variable that doesn't collide with base inputs
+    uniqueVars.forEach(varName => {
+      if (!baseInputNames.has(varName)) {
+        const alreadyExists = this.localConfig.inputs.some(
+          i => i.name === varName,
+        );
+        if (!alreadyExists) {
+          this.localConfig.inputs.push({
+            name: varName,
+            label: varName,
+            type: 'text',
+            required: false,
+          });
+        }
+        if (!inputs.contains(varName)) {
+          inputs.addControl(varName, this.fb.control(null));
+        }
+        if (!this.inputModes[varName]) {
+          const val = inputs.get(varName)?.value;
+          const isLinked =
+            val &&
+            typeof val === 'object' &&
+            !Array.isArray(val) &&
+            'step' in val &&
+            'output' in val;
+          this.inputModes[varName] = isLinked ? 'linked' : 'fixed';
+        }
+      }
+    });
+
+    this.updateCompatibleOutputs();
   }
 }

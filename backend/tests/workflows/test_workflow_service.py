@@ -29,6 +29,7 @@ from src.workflows.schema.workflow_model import (
     ImageSettings,
     ImageStep,
     NodeTypes,
+    StepOutputReference,
     WorkflowCreateDto,
     WorkflowModel,
 )
@@ -179,6 +180,58 @@ class TestWorkflowServiceConfig:
         assert image_step["call"] == "http.post"
         assert image_step["args"]["url"].endswith("/image")
         assert image_step["args"]["body"]["config"]["mode"] == "generate_image"
+
+    def test_generate_workflow_yaml_with_generate_text_dynamic_variables(
+        self, workflow_service
+    ):
+        from src.config.config_service import config_service
+
+        config_service.WORKFLOWS_LOCATION = "us-central1"
+
+        workflow_model = WorkflowModel(
+            id="id-text-vars-wf",
+            user_id=1,
+            name="Text Variables Workflow",
+            description="Workflow with Generate Text step using dynamic prompt variables",
+            steps=[
+                GenerateTextStep(
+                    step_id="step_gen_text",
+                    type=NodeTypes.GENERATE_TEXT,
+                    inputs=GenerateTextInputs(
+                        prompt="Create an image of a <animal> wearing a <outfit>",
+                        animal="cat",
+                        outfit=StepOutputReference(
+                            step="step_outfit_source",
+                            output="generated_text",
+                        ),
+                    ),
+                    settings=GenerateTextSettings(
+                        model="gemini-3-flash-preview",
+                        temperature=0.7,
+                    ),
+                ),
+            ],
+        )
+
+        yaml_output = workflow_service._generate_workflow_yaml(workflow_model)
+        parsed = yaml.safe_load(yaml_output)
+
+        steps = parsed["main"]["steps"]
+        assert len(steps) == 1
+        assert "step_gen_text" in steps[0]
+        step_entry = steps[0]["step_gen_text"]
+        assert step_entry["call"] == "http.post"
+        assert step_entry["args"]["url"].endswith("/generate_text")
+        inputs_body = step_entry["args"]["body"]["inputs"]
+        assert (
+            inputs_body["prompt"]
+            == "Create an image of a <animal> wearing a <outfit>"
+        )
+        assert inputs_body["animal"] == "cat"
+        assert (
+            inputs_body["outfit"]
+            == "${step_outfit_source_result.body.generated_text}"
+        )
 
 
 class TestCreateWorkflow:

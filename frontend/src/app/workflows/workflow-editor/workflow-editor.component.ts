@@ -721,7 +721,33 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       const settingsGroup = stepControl.get('settings') as FormGroup;
       const modelValue = settingsGroup?.get('model')?.value;
 
-      config.inputs.forEach((input: any) => {
+      const configuredNames = new Set(config.inputs.map((i: any) => i.name));
+      const allInputs = [...config.inputs];
+      if (inputsGroup) {
+        const promptVal = inputsGroup.get('prompt')?.value;
+        const isPromptLinked =
+          config.type === 'generate-text' &&
+          promptVal &&
+          typeof promptVal === 'object' &&
+          !Array.isArray(promptVal) &&
+          'step' in promptVal &&
+          'output' in promptVal;
+
+        Object.keys(inputsGroup.controls).forEach(controlName => {
+          if (!configuredNames.has(controlName)) {
+            if (isPromptLinked) {
+              return;
+            }
+            allInputs.push({
+              name: controlName,
+              label: controlName,
+              type: 'text',
+            });
+          }
+        });
+      }
+
+      allInputs.forEach((input: any) => {
         // Skip candidate if input control is disabled in the form
         if (inputsGroup) {
           const control = inputsGroup.get(input.name);
@@ -800,9 +826,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
           const stepType = stepForm.get('type')?.value;
           const config = this.getStepConfig(stepType);
-          const inputConfig = config?.inputs?.find(
+          let inputConfig = config?.inputs?.find(
             (i: any) => i.name === event.inputName,
           );
+          if (!inputConfig && inputs.contains(event.inputName)) {
+            inputConfig = {
+              name: event.inputName,
+              label: event.inputName,
+              type: 'text',
+            };
+          }
 
           // Type Compatibility Check: Reject incompatible connections (e.g. TXT source to IMG target)
           const sourceType =
@@ -1409,6 +1442,26 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             newInputs[key] = this.cleanInputValue(val);
           }
         });
+
+        // If generate-text step has a linked/non-fixed prompt, do not save dynamic variables
+        if (newStep.type === NodeTypes.GENERATE_TEXT) {
+          const promptVal = newInputs['prompt'];
+          const isPromptFixed = typeof promptVal === 'string';
+
+          if (!isPromptFixed) {
+            const baseNames = new Set([
+              'prompt',
+              'input_images',
+              'input_videos',
+            ]);
+            Object.keys(newInputs).forEach(k => {
+              if (!baseNames.has(k)) {
+                delete newInputs[k];
+              }
+            });
+          }
+        }
+
         newStep.inputs = newInputs;
       }
       return newStep;
