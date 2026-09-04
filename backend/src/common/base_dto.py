@@ -63,9 +63,13 @@ class GenerationModelEnum(str, Enum):
     VTO = "virtual-try-on-001"
 
     # Text / LLM Models
+    GEMINI_3_8_FLASH = "gemini-3.8-flash"
     GEMINI_3_7_FLASH = "gemini-3.7-flash"
+    GEMINI_3_6_FLASH = "gemini-3.6-flash"
+    GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
     GEMINI_3_1_PRO_PREVIEW = "gemini-3.1-pro-preview"
     GEMINI_3_1_FLASH_PREVIEW = "gemini-3.1-flash-preview"
+    GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite"
     GEMINI_3_1_FLASH_LITE_PREVIEW = "gemini-3.1-flash-lite-preview"
 
     # Video-Specific Models
