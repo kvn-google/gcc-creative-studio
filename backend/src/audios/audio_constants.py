@@ -17,6 +17,13 @@
 from enum import Enum
 
 
+class AudioFormatEnum(str, Enum):
+    """Supported Audio Output Formats."""
+
+    MP3 = "MP3"
+    WAV = "WAV"
+
+
 class LanguageEnum(str, Enum):
     """Supported Languages for Chirp and Gemini TTS."""
 

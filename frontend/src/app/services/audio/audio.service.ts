@@ -36,11 +36,17 @@ export enum GenerationModelEnum {
   GEMINI_3_1_FLASH_TTS_PREVIEW = 'gemini-3.1-flash-tts-preview',
 }
 
+export enum AudioFormatEnum {
+  MP3 = 'MP3',
+  WAV = 'WAV',
+}
+
 // 2. Define the Generic Request DTO
 export interface CreateAudioDto {
   model: GenerationModelEnum;
   prompt: string;
   workspaceId: number;
+  outputFormat?: AudioFormatEnum;
 
   // Lyria Specific
   negativePrompt?: string;

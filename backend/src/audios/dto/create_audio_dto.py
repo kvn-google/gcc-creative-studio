@@ -17,7 +17,11 @@ from typing import Annotated
 from fastapi import Query
 from pydantic import Field, field_validator, model_validator
 
-from src.audios.audio_constants import LanguageEnum, VoiceEnum
+from src.audios.audio_constants import (
+    AudioFormatEnum,
+    LanguageEnum,
+    VoiceEnum,
+)
 from src.common.base_dto import BaseDto, GenerationModelEnum
 
 
@@ -88,6 +92,20 @@ class CreateAudioDto(BaseDto):
         default=None,
         description="Optional name for the generated media.",
     )
+
+    output_format: AudioFormatEnum | None = Field(
+        default=AudioFormatEnum.MP3,
+        description="The output audio format (MP3 or WAV).",
+    )
+
+    @field_validator("output_format", mode="before")
+    @classmethod
+    def normalize_output_format(cls, value: object) -> object:
+        if isinstance(value, str):
+            val_upper = value.upper()
+            if val_upper in AudioFormatEnum.__members__:
+                return AudioFormatEnum(val_upper)
+        return value
 
     @field_validator("model")
     @classmethod

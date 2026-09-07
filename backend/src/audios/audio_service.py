@@ -36,7 +36,11 @@ from google.cloud.logging.handlers import CloudLoggingHandler
 from google.genai import types
 from google.protobuf import json_format, struct_pb2
 
-from src.audios.audio_constants import LanguageEnum, VoiceEnum
+from src.audios.audio_constants import (
+    AudioFormatEnum,
+    LanguageEnum,
+    VoiceEnum,
+)
 from src.audios.dto.create_audio_dto import CreateAudioDto
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
@@ -44,6 +48,7 @@ from src.common.base_dto import (
     GenerationModelEnum,
     MimeTypeEnum,
 )
+from src.common.media_utils import convert_mp3_to_wav, convert_wav_to_mp3
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import JobStatusEnum, MediaItemModel
 from src.common.storage_service import GcsService
@@ -111,6 +116,32 @@ def _process_audio_in_background(
 
                         permanent_gcs_uris = []
                         uid_short = str(user_id)[:4]
+                        target_format = (
+                            request_dto.output_format or AudioFormatEnum.MP3
+                        )
+                        target_ext = (
+                            "wav"
+                            if target_format == AudioFormatEnum.WAV
+                            else "mp3"
+                        )
+                        target_mime = (
+                            MimeTypeEnum.AUDIO_WAV
+                            if target_format == AudioFormatEnum.WAV
+                            else MimeTypeEnum.AUDIO_MPEG
+                        )
+
+                        def build_file_name(
+                            prefix: str, index: int, include_model: bool = True
+                        ) -> str:
+                            model_part = (
+                                f"_{request_dto.model.value}"
+                                if include_model
+                                else ""
+                            )
+                            return (
+                                f"{prefix}{model_part}_{media_item_id}_"
+                                f"{uid_short}_{index}.{target_ext}"
+                            )
 
                         if request_dto.model in AudioService.GEMINI_MODELS:
                             client = GenAIModelSetup.init()
@@ -174,12 +205,20 @@ def _process_audio_in_background(
                                         wav_file.setframerate(24000)
                                         wav_file.writeframes(pcm_bytes)
                                     final_wav_bytes = wav_buffer.getvalue()
-                                    file_name = f"gemini_audio_{request_dto.model.value}_{media_item_id}_{uid_short}_{index}.wav"
+                                    if target_format == AudioFormatEnum.MP3:
+                                        final_audio_bytes = convert_wav_to_mp3(
+                                            final_wav_bytes
+                                        )
+                                    else:
+                                        final_audio_bytes = final_wav_bytes
+                                    file_name = build_file_name(
+                                        "gemini_audio", index
+                                    )
                                     return gcs_service.store_to_gcs(
                                         folder="gemini_audio",
                                         file_name=file_name,
-                                        mime_type=MimeTypeEnum.AUDIO_WAV,
-                                        contents=final_wav_bytes,
+                                        mime_type=target_mime,
+                                        contents=final_audio_bytes,
                                         decode=False,
                                     )
                                 except Exception as e:
@@ -226,8 +265,16 @@ def _process_audio_in_background(
                                             name=voice_name,
                                         )
                                     )
+                                    is_mp3 = (
+                                        target_format == AudioFormatEnum.MP3
+                                    )
+                                    audio_encoding = (
+                                        texttospeech.AudioEncoding.MP3
+                                        if is_mp3
+                                        else texttospeech.AudioEncoding.LINEAR16
+                                    )
                                     audio_config = texttospeech.AudioConfig(
-                                        audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+                                        audio_encoding=audio_encoding,
                                         speaking_rate=1.0,
                                         volume_gain_db=0.0,
                                     )
@@ -237,11 +284,11 @@ def _process_audio_in_background(
                                         voice=voice_params,
                                         audio_config=audio_config,
                                     )
-                                    file_name = f"tts_{request_dto.model.value}_{media_item_id}_{uid_short}_{index}.wav"
+                                    file_name = build_file_name("tts", index)
                                     return gcs_service.store_to_gcs(
                                         folder="tts_audio",
                                         file_name=file_name,
-                                        mime_type=MimeTypeEnum.AUDIO_WAV,
+                                        mime_type=target_mime,
                                         contents=response.audio_content,
                                         decode=False,
                                     )
@@ -317,14 +364,28 @@ def _process_audio_in_background(
                                             )
                                             return None
 
-                                        file_name = f"lyria_music_{media_item_id}_{uid_short}_{index}.mp3"
+                                        raw_audio_bytes = base64.b64decode(
+                                            audio_b64
+                                        )
+                                        if target_format == AudioFormatEnum.WAV:
+                                            final_audio_bytes = (
+                                                convert_mp3_to_wav(
+                                                    raw_audio_bytes
+                                                )
+                                            )
+                                        else:
+                                            final_audio_bytes = raw_audio_bytes
+
+                                        file_name = build_file_name(
+                                            "lyria_music",
+                                            index,
+                                            include_model=False,
+                                        )
                                         return gcs_service.store_to_gcs(
                                             folder="lyria_audio",
                                             file_name=file_name,
-                                            mime_type=MimeTypeEnum.AUDIO_MPEG,
-                                            contents=base64.b64decode(
-                                                audio_b64
-                                            ),
+                                            mime_type=target_mime,
+                                            contents=final_audio_bytes,
                                             decode=False,
                                         )
                                     except Exception as e:
@@ -396,14 +457,28 @@ def _process_audio_in_background(
                                         if not audio_b64:
                                             return None
 
-                                        file_name = f"lyria_music_{media_item_id}_{uid_short}_{index}.wav"
+                                        raw_audio_bytes = base64.b64decode(
+                                            audio_b64
+                                        )
+                                        if target_format == AudioFormatEnum.MP3:
+                                            final_audio_bytes = (
+                                                convert_wav_to_mp3(
+                                                    raw_audio_bytes
+                                                )
+                                            )
+                                        else:
+                                            final_audio_bytes = raw_audio_bytes
+
+                                        file_name = build_file_name(
+                                            "lyria_music",
+                                            index,
+                                            include_model=False,
+                                        )
                                         return gcs_service.store_to_gcs(
                                             folder="lyria_audio",
                                             file_name=file_name,
-                                            mime_type=MimeTypeEnum.AUDIO_WAV,
-                                            contents=base64.b64decode(
-                                                audio_b64
-                                            ),
+                                            mime_type=target_mime,
+                                            contents=final_audio_bytes,
                                             decode=False,
                                         )
                                     except Exception as e:
@@ -451,7 +526,7 @@ def _process_audio_in_background(
                                     ),
                                     media_uris=permanent_gcs_uris,
                                     model_name=request_dto.metadata_generation_model,
-                                    mime_type="audio/mpeg",
+                                    mime_type=target_mime.value,
                                 )
                                 titles = metadata.get("titles")
                                 if titles:
@@ -518,11 +593,17 @@ class AudioService:
         user: UserModel,
         executor: ThreadPoolExecutor,
     ) -> MediaItemResponse:
+        target_format = request_dto.output_format or AudioFormatEnum.MP3
+        mime_type = (
+            MimeTypeEnum.AUDIO_WAV
+            if target_format == AudioFormatEnum.WAV
+            else MimeTypeEnum.AUDIO_MPEG
+        )
 
         media_post_to_save = MediaItemModel(
             user_email=user.email,
             user_id=user.id,
-            mime_type=MimeTypeEnum.AUDIO_WAV,
+            mime_type=mime_type,
             model=request_dto.model,
             aspect_ratio=AspectRatioEnum.RATIO_16_9,
             workspace_id=request_dto.workspace_id,

@@ -15,10 +15,11 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
+import {AudioFormatEnum} from '../../../../services/audio/audio.service';
 import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
-const model_options = MODEL_CONFIGS.filter(model => model.type === 'AUDIO').map(
+const modelOptions = MODEL_CONFIGS.filter(model => model.type === 'AUDIO').map(
   model => ({
     value: model.value,
     label: model.viewValue,
@@ -47,6 +48,11 @@ const LANGUAGE_OPTIONS = [
   {value: 'pt-BR', label: 'Portuguese (Brazil)'},
 ];
 
+export const AUDIO_FORMAT_OPTIONS = [
+  {value: AudioFormatEnum.MP3, label: AudioFormatEnum.MP3},
+  {value: AudioFormatEnum.WAV, label: AudioFormatEnum.WAV},
+];
+
 export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
   type: NodeTypes.GENERATE_AUDIO,
   title: 'Generate Audio',
@@ -64,8 +70,15 @@ export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
       name: 'model',
       label: 'Model',
       type: 'select',
-      options: model_options,
+      options: modelOptions,
       defaultValue: 'lyria-002',
+    },
+    {
+      name: 'output_format',
+      label: 'Output Format',
+      type: 'select',
+      options: AUDIO_FORMAT_OPTIONS,
+      defaultValue: AudioFormatEnum.MP3,
     },
     {
       name: 'voice_name',

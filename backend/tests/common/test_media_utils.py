@@ -18,6 +18,9 @@ from unittest.mock import MagicMock, patch
 
 from src.common.media_utils import (
     concatenate_videos,
+    convert_audio,
+    convert_mp3_to_wav,
+    convert_wav_to_mp3,
     extract_youtube_video_id,
     format_api_error_message,
     generate_image_thumbnail_bytes,
@@ -252,3 +255,144 @@ def test_format_api_error_message_none():
 def test_format_api_error_message_plain():
     msg = format_api_error_message(Exception("Standard failure message"))
     assert msg == "Standard failure message"
+
+
+def test_convert_wav_to_mp3_success():
+    with patch("src.common.media_utils.subprocess.run") as mock_run:
+        mock_proc = MagicMock()
+        mock_proc.stdout = b"mp3_output_bytes"
+        mock_run.return_value = mock_proc
+
+        result = convert_wav_to_mp3(b"wav_input_bytes")
+        assert result == b"mp3_output_bytes"
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        assert "ffmpeg" in args[0]
+        assert kwargs["input"] == b"wav_input_bytes"
+
+
+def test_convert_wav_to_mp3_ffmpeg_not_found():
+    import pytest
+
+    with patch(
+        "src.common.media_utils.subprocess.run",
+        side_effect=FileNotFoundError("No ffmpeg"),
+    ):
+        with pytest.raises(RuntimeError, match="ffmpeg not found"):
+            convert_wav_to_mp3(b"wav_input_bytes")
+
+
+def test_convert_wav_to_mp3_called_process_error():
+    import subprocess
+    import pytest
+
+    with patch(
+        "src.common.media_utils.subprocess.run",
+        side_effect=subprocess.CalledProcessError(
+            returncode=1, cmd=["ffmpeg"], stderr=b"codec error"
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError, match="Audio conversion to MP3 failed"
+        ):
+            convert_wav_to_mp3(b"wav_input_bytes")
+
+
+def test_convert_mp3_to_wav_success():
+    with patch("src.common.media_utils.subprocess.run") as mock_run:
+        mock_proc = MagicMock()
+        mock_proc.stdout = b"wav_output_bytes"
+        mock_run.return_value = mock_proc
+
+        result = convert_mp3_to_wav(b"mp3_input_bytes")
+        assert result == b"wav_output_bytes"
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        assert "ffmpeg" in args[0]
+        assert kwargs["input"] == b"mp3_input_bytes"
+
+
+def test_convert_mp3_to_wav_ffmpeg_not_found():
+    import pytest
+
+    with patch(
+        "src.common.media_utils.subprocess.run",
+        side_effect=FileNotFoundError("No ffmpeg"),
+    ):
+        with pytest.raises(RuntimeError, match="ffmpeg not found"):
+            convert_mp3_to_wav(b"mp3_input_bytes")
+
+
+def test_convert_mp3_to_wav_called_process_error():
+    import subprocess
+    import pytest
+
+    with patch(
+        "src.common.media_utils.subprocess.run",
+        side_effect=subprocess.CalledProcessError(
+            returncode=1, cmd=["ffmpeg"], stderr=b"decode error"
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError, match="Audio conversion to WAV failed"
+        ):
+            convert_mp3_to_wav(b"mp3_input_bytes")
+
+
+def test_convert_audio_with_extra_args():
+    with patch("src.common.media_utils.subprocess.run") as mock_run:
+        mock_proc = MagicMock()
+        mock_proc.stdout = b"output_bytes"
+        mock_run.return_value = mock_proc
+
+        res = convert_audio(
+            audio_bytes=b"input_bytes",
+            input_format="wav",
+            output_format="mp3",
+            extra_args=["-codec:a", "libmp3lame"],
+        )
+        assert res == b"output_bytes"
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        cmd = args[0]
+        assert cmd == [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "wav",
+            "-i",
+            "pipe:0",
+            "-f",
+            "mp3",
+            "-codec:a",
+            "libmp3lame",
+            "pipe:1",
+        ]
+        assert kwargs["input"] == b"input_bytes"
+
+
+def test_convert_audio_ffmpeg_not_found():
+    import pytest
+
+    with patch(
+        "src.common.media_utils.subprocess.run",
+        side_effect=FileNotFoundError(),
+    ):
+        with pytest.raises(RuntimeError, match="ffmpeg not found"):
+            convert_audio(b"test", "wav", "mp3")
+
+
+def test_convert_audio_called_process_error():
+    import subprocess
+    import pytest
+
+    with patch(
+        "src.common.media_utils.subprocess.run",
+        side_effect=subprocess.CalledProcessError(
+            returncode=1, cmd=["ffmpeg"], stderr=b"some error"
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError, match="Audio conversion to OGG failed"
+        ):
+            convert_audio(b"test", "wav", "ogg")

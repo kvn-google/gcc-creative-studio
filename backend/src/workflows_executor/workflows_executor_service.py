@@ -683,6 +683,7 @@ class WorkflowsExecutorService:
             "workspace_id": request.workspace_id,
             "prompt": request.inputs.prompt,
             "model": request.config.model,
+            "output_format": getattr(request.config, "output_format", None),
             "voice_name": request.config.voice_name,
             "language_code": request.config.language_code,
             "negative_prompt": request.config.negative_prompt,

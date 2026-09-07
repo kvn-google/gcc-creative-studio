@@ -329,3 +329,103 @@ def format_api_error_message(e: Exception | str | None) -> str:
             pass
 
     return err_str
+
+
+def convert_audio(
+    audio_bytes: bytes,
+    input_format: str,
+    output_format: str,
+    extra_args: list[str] | None = None,
+) -> bytes:
+    """Converts audio bytes from one format to another using ffmpeg.
+
+    Args:
+        audio_bytes: The input audio bytes.
+        input_format: The input audio format (e.g. 'wav', 'mp3').
+        output_format: The target audio format (e.g. 'mp3', 'wav').
+        extra_args: Optional additional ffmpeg command line arguments.
+
+    Returns:
+        The converted audio bytes.
+
+    Raises:
+        RuntimeError: If ffmpeg is missing or conversion fails.
+    """
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        input_format,
+        "-i",
+        "pipe:0",
+        "-f",
+        output_format,
+    ]
+    if extra_args:
+        cmd.extend(extra_args)
+    cmd.append("pipe:1")
+
+    try:
+        process = subprocess.run(
+            cmd,
+            input=audio_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        return process.stdout
+    except FileNotFoundError as e:
+        logger.error("ffmpeg not found in system path")
+        raise RuntimeError(
+            "ffmpeg not found. Please ensure ffmpeg is installed and in your system PATH."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        logger.error(
+            "ffmpeg %s to %s conversion failed: %s",
+            input_format.upper(),
+            output_format.upper(),
+            e.stderr,
+        )
+        raise RuntimeError(
+            f"Audio conversion to {output_format.upper()} failed: "
+            f"{e.stderr.decode('utf-8', errors='replace')}"
+        ) from e
+
+
+def convert_wav_to_mp3(wav_bytes: bytes) -> bytes:
+    """Converts WAV audio bytes to MP3 bytes using ffmpeg.
+
+    Args:
+        wav_bytes: The input WAV audio bytes.
+
+    Returns:
+        The encoded MP3 bytes.
+
+    Raises:
+        RuntimeError: If ffmpeg is missing or conversion fails.
+    """
+    return convert_audio(
+        audio_bytes=wav_bytes,
+        input_format="wav",
+        output_format="mp3",
+        extra_args=["-codec:a", "libmp3lame", "-b:a", "192k"],
+    )
+
+
+def convert_mp3_to_wav(mp3_bytes: bytes) -> bytes:
+    """Converts MP3 audio bytes to WAV bytes using ffmpeg.
+
+    Args:
+        mp3_bytes: The input MP3 audio bytes.
+
+    Returns:
+        The decoded WAV bytes.
+
+    Raises:
+        RuntimeError: If ffmpeg is missing or conversion fails.
+    """
+    return convert_audio(
+        audio_bytes=mp3_bytes,
+        input_format="mp3",
+        output_format="wav",
+    )

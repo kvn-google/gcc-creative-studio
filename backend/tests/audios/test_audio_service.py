@@ -23,8 +23,12 @@ from src.common.schema.media_item_model import (
 )
 from src.users.user_model import UserModel
 from src.audios.dto.create_audio_dto import CreateAudioDto
+from src.audios.audio_constants import (
+    AudioFormatEnum,
+    LanguageEnum,
+    VoiceEnum,
+)
 from src.audios.audio_service import AudioService, _process_audio_in_background
-from src.audios.audio_constants import LanguageEnum, VoiceEnum
 
 
 @pytest.fixture(name="mock_media_repo")
@@ -113,8 +117,10 @@ class TestBackgroundWorkers:
     @patch("src.audios.audio_service.MediaRepository")
     @patch("src.audios.audio_service.aiplatform.gapic.PredictionServiceClient")
     @patch("src.audios.audio_service.GcsService")
+    @patch("src.audios.audio_service.convert_wav_to_mp3")
     def test_process_lyria_in_background_sync(
         self,
+        mock_convert_wav,
         mock_gcs,
         mock_aiplatform,
         mock_repo_cls,
@@ -122,6 +128,7 @@ class TestBackgroundWorkers:
         sample_create_lyria_dto,
         sample_user,
     ):
+        mock_convert_wav.return_value = b"converted_mp3"
         mock_db_factory = MagicMock()
         mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
         mock_db_session = AsyncMock()
@@ -131,7 +138,7 @@ class TestBackgroundWorkers:
         mock_repo_cls.return_value = mock_repo
 
         mock_gcs_singleton = MagicMock()
-        mock_gcs_singleton.store_to_gcs.return_value = "gs://foo/bar.wav"
+        mock_gcs_singleton.store_to_gcs.return_value = "gs://foo/bar.mp3"
         mock_gcs.return_value = mock_gcs_singleton
 
         mock_ai_instance = MagicMock()
@@ -151,12 +158,13 @@ class TestBackgroundWorkers:
             123,
             {
                 "status": JobStatusEnum.COMPLETED,
-                "gcs_uris": ["gs://foo/bar.wav"],
+                "gcs_uris": ["gs://foo/bar.mp3"],
                 "generation_time": pytest.approx(
                     0, abs=10.0
                 ),  # loose assertion
             },
         )
+        mock_convert_wav.assert_called_once()
 
     @patch("src.database.WorkerDatabase")
     @patch("src.audios.audio_service.MediaRepository")
@@ -296,3 +304,178 @@ class TestBackgroundWorkers:
             gemini31_dto.model
             == GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW
         )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.aiplatform.gapic.PredictionServiceClient")
+    @patch("src.audios.audio_service.GcsService")
+    @patch("src.audios.audio_service.convert_wav_to_mp3")
+    def test_process_lyria_wav_format(
+        self,
+        mock_convert_wav,
+        mock_gcs,
+        mock_aiplatform,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        wav_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Lyria WAV prompt",
+            model=GenerationModelEnum.LYRIA_002,
+            sample_count=1,
+            output_format=AudioFormatEnum.WAV,
+        )
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_session = AsyncMock()
+        mock_db_factory.return_value.__aenter__.return_value = mock_db_session
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_gcs_singleton = MagicMock()
+        mock_gcs_singleton.store_to_gcs.return_value = "gs://foo/bar.wav"
+        mock_gcs.return_value = mock_gcs_singleton
+        mock_ai_instance = MagicMock()
+        mock_ai_instance.predict.return_value = MagicMock(
+            predictions=[{"bytesBase64Encoded": "SGVsbG8="}]
+        )
+        mock_aiplatform.return_value = mock_ai_instance
+
+        _process_audio_in_background(
+            media_item_id=130,
+            request_dto=wav_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        mock_convert_wav.assert_not_called()
+        mock_gcs_singleton.store_to_gcs.assert_called_once()
+        _, kwargs = mock_gcs_singleton.store_to_gcs.call_args
+        assert kwargs["mime_type"] == MimeTypeEnum.AUDIO_WAV
+        assert kwargs["file_name"].endswith(".wav")
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.AuthorizedSession")
+    @patch("src.audios.audio_service.GcsService")
+    @patch("src.audios.audio_service.convert_mp3_to_wav")
+    def test_process_lyria3_wav_format(
+        self,
+        mock_convert_mp3,
+        mock_gcs,
+        mock_session_cls,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        wav_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Lyria 3 WAV prompt",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            sample_count=1,
+            output_format=AudioFormatEnum.WAV,
+        )
+        mock_convert_mp3.return_value = b"wav_bytes"
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_session = AsyncMock()
+        mock_db_factory.return_value.__aenter__.return_value = mock_db_session
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_gcs_singleton = MagicMock()
+        mock_gcs_singleton.store_to_gcs.return_value = "gs://foo/lyria3.wav"
+        mock_gcs.return_value = mock_gcs_singleton
+
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "outputs": [{"type": "audio", "data": "SGVsbG8="}]
+        }
+        mock_session.post.return_value = mock_resp
+        mock_session_cls.return_value = mock_session
+
+        _process_audio_in_background(
+            media_item_id=131,
+            request_dto=wav_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        mock_convert_mp3.assert_called_once()
+        mock_gcs_singleton.store_to_gcs.assert_called_once()
+        _, kwargs = mock_gcs_singleton.store_to_gcs.call_args
+        assert kwargs["mime_type"] == MimeTypeEnum.AUDIO_WAV
+        assert kwargs["file_name"].endswith(".wav")
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.texttospeech.TextToSpeechClient")
+    @patch("src.audios.audio_service.GcsService")
+    def test_process_tts_wav_format(
+        self,
+        mock_gcs,
+        mock_tts_client,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        wav_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="TTS WAV prompt",
+            model=GenerationModelEnum.CHIRP_3,
+            language_code=LanguageEnum.EN_US,
+            voice_name=VoiceEnum.PUCK,
+            output_format=AudioFormatEnum.WAV,
+        )
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_session = AsyncMock()
+        mock_db_factory.return_value.__aenter__.return_value = mock_db_session
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_gcs_singleton = MagicMock()
+        mock_gcs_singleton.store_to_gcs.return_value = "gs://foo/tts.wav"
+        mock_gcs.return_value = mock_gcs_singleton
+
+        mock_tts_instance = MagicMock()
+        mock_tts_instance.synthesize_speech.return_value = MagicMock(
+            audio_content=b"123"
+        )
+        mock_tts_client.return_value = mock_tts_instance
+
+        _process_audio_in_background(
+            media_item_id=132,
+            request_dto=wav_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        mock_tts_instance.synthesize_speech.assert_called_once()
+        _, call_kwargs = mock_tts_instance.synthesize_speech.call_args
+        from google.cloud import texttospeech_v1beta1 as texttospeech
+
+        assert (
+            call_kwargs["audio_config"].audio_encoding
+            == texttospeech.AudioEncoding.LINEAR16
+        )
+        _, kwargs = mock_gcs_singleton.store_to_gcs.call_args
+        assert kwargs["mime_type"] == MimeTypeEnum.AUDIO_WAV
+        assert kwargs["file_name"].endswith(".wav")
+
+    def test_output_format_normalization(self):
+        dto_lower = CreateAudioDto(
+            workspace_id=1,
+            prompt="Test",
+            model=GenerationModelEnum.LYRIA_002,
+            output_format="wav",
+        )
+        assert dto_lower.output_format == AudioFormatEnum.WAV
+
+        dto_upper = CreateAudioDto(
+            workspace_id=1,
+            prompt="Test",
+            model=GenerationModelEnum.LYRIA_002,
+            output_format="MP3",
+        )
+        assert dto_upper.output_format == AudioFormatEnum.MP3

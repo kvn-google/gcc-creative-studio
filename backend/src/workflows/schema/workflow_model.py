@@ -199,6 +199,7 @@ class GenerateAudioInputs(BaseModel):
 
 class GenerateAudioSettings(BaseModel):
     model: str
+    output_format: str | None = "MP3"
     voice_name: str | None = None
     language_code: str | None = None
     negative_prompt: str | None = None
