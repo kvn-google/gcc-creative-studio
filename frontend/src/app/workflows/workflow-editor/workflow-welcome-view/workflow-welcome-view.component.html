@@ -1,0 +1,276 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="welcome-container" id="workflow-welcome-container">
+  <!-- Optional Close Button -->
+  <button
+    *ngIf="canClose"
+    mat-icon-button
+    class="welcome-close-btn"
+    id="welcome-close-view-btn"
+    (click)="onClose()"
+    aria-label="Close templates dialog"
+    matTooltip="Close"
+  >
+    <mat-icon>close</mat-icon>
+  </button>
+
+  <!-- Header Section -->
+  <header class="welcome-header">
+    <div class="header-content">
+      <div class="badge-row">
+        <span class="welcome-badge">
+          <mat-icon class="badge-icon">auto_awesome</mat-icon>
+          Workflow Blueprints
+        </span>
+      </div>
+      <h1 class="welcome-title">Start a New Workflow</h1>
+      <p class="welcome-subtitle">
+        Jumpstart your creative pipeline with a predefined template, use one of your saved blueprints, or start from a blank canvas.
+      </p>
+    </div>
+
+    <!-- Search and Controls -->
+    <div class="search-bar-row">
+      <div class="search-input-wrapper">
+        <mat-icon class="search-icon">search</mat-icon>
+        <input
+          type="text"
+          id="template-search-input"
+          class="search-input"
+          placeholder="Search templates by name or description..."
+          [value]="searchQuery()"
+          (input)="onSearchChange($any($event.target).value)"
+        />
+        <button
+          *ngIf="searchQuery()"
+          mat-icon-button
+          class="clear-search-btn"
+          id="clear-template-search-btn"
+          (click)="onSearchChange('')"
+          aria-label="Clear search"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="tabs-nav" id="welcome-tabs-nav" aria-label="Template categories">
+        <button
+          type="button"
+          class="tab-button"
+          id="tab-all"
+          [class.active]="activeTab() === 'all'"
+          (click)="setTab('all')"
+        >
+          <span>All Options</span>
+        </button>
+        <button
+          type="button"
+          class="tab-button"
+          id="tab-predefined"
+          [class.active]="activeTab() === 'predefined'"
+          (click)="setTab('predefined')"
+        >
+          <span>Predefined</span>
+          <span class="count-pill">{{ predefinedTemplateCount() }}</span>
+        </button>
+        <button
+          type="button"
+          class="tab-button"
+          id="tab-user"
+          [class.active]="activeTab() === 'user'"
+          (click)="setTab('user')"
+        >
+          <span>My Templates</span>
+          <span class="count-pill">{{ userTemplateCount() }}</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Error Alert -->
+  <div *ngIf="errorMessage()" class="error-banner" role="alert" id="welcome-error-banner">
+    <mat-icon class="error-icon">error_outline</mat-icon>
+    <span>{{ errorMessage() }}</span>
+  </div>
+
+  <!-- Content Grid -->
+  <main class="templates-main" id="templates-grid-section">
+    <div class="templates-grid">
+      <!-- 1. Blank Workflow Card (Shown on All or when search is empty) -->
+      <div
+        *ngIf="activeTab() === 'all' && !searchQuery()"
+        class="template-card blank-card"
+        id="card-blank-workflow"
+        (click)="selectBlankWorkflow()"
+        tabindex="0"
+        role="button"
+        (keydown.enter)="selectBlankWorkflow()"
+      >
+        <div class="card-glow"></div>
+        <div class="card-body">
+          <div class="icon-avatar blank-avatar">
+            <mat-icon>add</mat-icon>
+          </div>
+          <div class="card-meta">
+            <span class="source-tag blank-tag">Start From Scratch</span>
+          </div>
+          <h2 class="card-title">Blank Workflow</h2>
+          <p class="card-description">
+            Build your own node pipeline from the ground up on an empty canvas.
+          </p>
+          <div class="card-footer">
+            <button
+              mat-flat-button
+              class="card-action-btn blank-btn"
+              id="btn-use-blank-workflow"
+              (click)="selectBlankWorkflow(); $event.stopPropagation()"
+            >
+              Start Blank
+              <mat-icon class="btn-arrow">arrow_forward</mat-icon>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Predefined Templates -->
+      <ng-container *ngIf="activeTab() === 'all' || activeTab() === 'predefined'">
+        <div
+          *ngFor="let template of filteredPredefinedTemplates(); let i = index"
+          class="template-card predefined-card"
+          [attr.id]="'card-predefined-' + i"
+          (click)="selectTemplate(template)"
+          tabindex="0"
+          role="button"
+          (keydown.enter)="selectTemplate(template)"
+        >
+          <div class="card-glow"></div>
+          <div class="card-body">
+            <div class="icon-avatar predefined-avatar">
+              <mat-icon>style</mat-icon>
+            </div>
+            <div class="card-meta">
+              <span class="source-tag predefined-tag">Predefined</span>
+              <span class="step-count">{{ template.steps.length }} Nodes</span>
+            </div>
+            <h2 class="card-title">{{ template.name }}</h2>
+            <p class="card-description">{{ template.description }}</p>
+            <div class="card-footer">
+              <button
+                mat-flat-button
+                class="card-action-btn"
+                [attr.id]="'btn-use-predefined-' + i"
+                (click)="selectTemplate(template); $event.stopPropagation()"
+              >
+                Use Template
+                <mat-icon class="btn-arrow">arrow_forward</mat-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+
+      <!-- 3. User-Created Templates -->
+      <ng-container *ngIf="activeTab() === 'all' || activeTab() === 'user'">
+        <div
+          *ngFor="let template of filteredUserTemplates(); let i = index"
+          class="template-card user-card"
+          [attr.id]="'card-user-template-' + i"
+          (click)="selectTemplate(template)"
+          tabindex="0"
+          role="button"
+          (keydown.enter)="selectTemplate(template)"
+        >
+          <div class="card-glow"></div>
+          <div class="card-body">
+            <div class="card-top-row">
+              <div class="icon-avatar user-avatar">
+                <mat-icon>dashboard_customize</mat-icon>
+              </div>
+              <button
+                mat-icon-button
+                class="delete-template-btn"
+                [attr.id]="'btn-delete-template-' + i"
+                (click)="deleteUserTemplate(template, $event)"
+                matTooltip="Delete Template"
+                aria-label="Delete template"
+              >
+                <mat-icon>delete_outline</mat-icon>
+              </button>
+            </div>
+            <div class="card-meta">
+              <span class="source-tag user-tag">My Template</span>
+              <span class="step-count">{{ template.steps.length }} Nodes</span>
+            </div>
+            <h2 class="card-title">{{ template.name }}</h2>
+            <p class="card-description">
+              {{ template.description || 'No description provided' }}
+            </p>
+            <div class="card-footer">
+              <span *ngIf="template.createdAt" class="date-text">
+                {{ template.createdAt | date: 'mediumDate' }}
+              </span>
+              <button
+                mat-flat-button
+                class="card-action-btn"
+                [attr.id]="'btn-use-user-template-' + i"
+                (click)="selectTemplate(template); $event.stopPropagation()"
+              >
+                Use Template
+                <mat-icon class="btn-arrow">arrow_forward</mat-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+    </div>
+
+    <!-- Empty State for User Templates -->
+    <div
+      *ngIf="activeTab() === 'user' && filteredUserTemplates().length === 0 && !isLoadingUserTemplates()"
+      class="empty-state"
+      id="empty-user-templates"
+    >
+      <div class="empty-icon-wrapper">
+        <mat-icon class="empty-icon">layers_clear</mat-icon>
+      </div>
+      <h3 class="empty-title">No Custom Templates Found</h3>
+      <p class="empty-description">
+        {{ searchQuery() ? 'No templates match your search query.' : 'You have not saved any custom templates yet. Build a workflow and click "Save as a template" in the editor toolbar to save it as a reusable blueprint.' }}
+      </p>
+      <button
+        *ngIf="!searchQuery()"
+        mat-flat-button
+        class="card-action-btn blank-btn"
+        id="btn-empty-start-blank"
+        (click)="selectBlankWorkflow()"
+      >
+        Start from Blank Canvas
+      </button>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div
+      *ngIf="isLoadingUserTemplates()"
+      class="loading-indicator"
+      id="welcome-loading-spinner"
+    >
+      <mat-spinner diameter="44" color="accent"></mat-spinner>
+      <span>Loading blueprints...</span>
+    </div>
+  </main>
+</div>
