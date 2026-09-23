@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import copy
 import datetime
 import json
 import logging
@@ -61,13 +62,21 @@ from src.workflows.schema.workflow_template_model import (
     WorkflowTemplateCreateDto,
     WorkflowTemplateModel,
 )
+from src.workflows import workflow_constants
 from src.workflows.workflow_constants import IMAGE_MODE_ALLOWED_INPUTS
-from src.workflows.workflow_utils import interpolate_prompt_variables
+from src.workflows.workflow_utils import (
+    build_iteration_step_name,
+    interpolate_prompt_variables,
+    parse_iteration_step_name,
+)
 
 logger = logging.getLogger(__name__)
 PROJECT_ID = config_service.PROJECT_ID
 LOCATION = config_service.WORKFLOWS_LOCATION
 BACKEND_EXECUTOR_URL = config_service.WORKFLOWS_EXECUTOR_URL
+# Safety cap when following `nextPageToken` on the stepEntries REST call.
+# GCP returns at most 1000 entries per page, so 20 pages = 20k entries.
+MAX_STEP_ENTRY_PAGES = 20
 
 
 class WorkflowService:
@@ -184,20 +193,39 @@ class WorkflowService:
                 "config": config,
             }
 
-            gcp_step = {
-                step_name: {
-                    "call": "http.post",
-                    "args": {
-                        "url": f"{BACKEND_EXECUTOR_URL}/{step_type}",
-                        "headers": {
-                            "Authorization": "${args.user_auth_header}"
+            # MVP ONLY: emit the same step N times back to back so we can
+            # observe how GCP records a step that executes more than once.
+            # Iterations 0..N-2 are renamed `{step_id}__iter_{k}` (Cloud
+            # Workflows rejects duplicate step names); the LAST iteration keeps
+            # the original `{step_id}` / `{step_id}_result` names so downstream
+            # `${step_id_result...}` references keep resolving to the last
+            # iteration. With MVP_STEP_REPEAT_COUNT == 1 the output is
+            # identical to the pre-MVP single-execution YAML.
+            repeat_count = max(1, workflow_constants.MVP_STEP_REPEAT_COUNT)
+            for iteration in range(repeat_count):
+                emitted_name = build_iteration_step_name(
+                    step_name,
+                    iteration,
+                    repeat_count,
+                )
+                gcp_step = {
+                    emitted_name: {
+                        "call": "http.post",
+                        "args": {
+                            "url": f"{BACKEND_EXECUTOR_URL}/{step_type}",
+                            "headers": {
+                                "Authorization": "${args.user_auth_header}"
+                            },
+                            # Deep copy so PyYAML does not emit anchors/aliases
+                            # for the repeated body object.
+                            "body": copy.deepcopy(body),
                         },
-                        "body": body,
+                        # Each iteration gets its own result variable so its
+                        # output stays independently visible in GCP.
+                        "result": f"{emitted_name}_result",
                     },
-                    "result": f"{step_name}_result",
-                },
-            }
-            gcp_steps.append(gcp_step)
+                }
+                gcp_steps.append(gcp_step)
 
             # Store mock outputs for subsequent steps
             step_outputs[step_name] = {
@@ -641,21 +669,35 @@ class WorkflowService:
         if execution.state == executions_v1.Execution.State.SUCCEEDED:
             result = execution.result
 
-        # Fetch step entries using REST API
+        # Fetch step entries using REST API (paginated: a step that runs more
+        # than once easily exceeds the 1000 entries returned per page).
+        step_entries: list[dict[str, Any]] = []
         try:
             credentials, project = google.auth.default(
                 scopes=["https://www.googleapis.com/auth/cloud-platform"],
             )
             authed_session = AuthorizedSession(credentials)
             url = f"https://workflowexecutions.googleapis.com/v1/{execution_name}/stepEntries"
-            response = authed_session.get(url)
-            if response.status_code == 200:
-                step_entries = response.json().get("stepEntries", [])
+            page_token: str | None = None
+            for _ in range(MAX_STEP_ENTRY_PAGES):
+                params = {"pageToken": page_token} if page_token else {}
+                response = authed_session.get(url, params=params)
+                if response.status_code != 200:
+                    logger.warning(
+                        "Failed to fetch step entries: %s", response.text
+                    )
+                    break
+                payload = response.json()
+                step_entries.extend(payload.get("stepEntries", []) or [])
+                page_token = payload.get("nextPageToken")
+                if not page_token:
+                    break
             else:
                 logger.warning(
-                    "Failed to fetch step entries: %s", response.text
+                    "Stopped fetching step entries after %s pages; "
+                    "results may be truncated.",
+                    MAX_STEP_ENTRY_PAGES,
                 )
-                step_entries = []  # Ensure step_entries is defined
         except Exception as e:
             logger.error("Error fetching step entries: %s", e)
             step_entries = []
@@ -776,82 +818,81 @@ class WorkflowService:
             )
         )
 
-        previous_outputs = {}
+        # MVP: a logical step can now produce several GCP step entries (one per
+        # emitted iteration), so `previous_outputs` tracks a LIST of outputs
+        # per step id instead of a single dict that each pass overwrote.
+        previous_outputs: dict[str, list[Any]] = {}
         formatted_step_entries = []
 
         # 1. Add User Input Step Entry (Virtual)
         # This ensures the User Input step appears in the history and its outputs are available for resolution
-        previous_outputs[user_input_step_id] = user_inputs
+        previous_outputs[user_input_step_id] = [user_inputs]
         if "user_input" not in previous_outputs:
-            previous_outputs["user_input"] = user_inputs
+            previous_outputs["user_input"] = [user_inputs]
+        user_input_time = (
+            execution.start_time.isoformat()  # type: ignore
+            if execution.start_time
+            else None
+        )
         formatted_step_entries.append(
             {
                 "step_id": user_input_step_id,
                 "state": "STATE_SUCCEEDED",  # User input is always considered succeeded if execution started
+                # NOTE: the flat `step_inputs` / `step_outputs` mirror the LAST
+                # iteration and are kept only for backwards compatibility with
+                # the current frontend. They will be dropped once the UI reads
+                # `history[]`.
                 "step_inputs": {},
                 "step_outputs": user_inputs,
-                "start_time": (
-                    execution.start_time.isoformat()
-                    if execution.start_time
-                    else None
-                ),  # type: ignore
-                "end_time": (
-                    execution.start_time.isoformat()  # type: ignore
-                    if execution.start_time
-                    else None
-                ),  # Instant # type: ignore
+                "start_time": user_input_time,
+                "end_time": user_input_time,  # Instant
+                # `history` is always present, even for a single execution.
+                "history": [
+                    {
+                        "iteration": 0,
+                        "state": "STATE_SUCCEEDED",
+                        "start_time": user_input_time,
+                        "end_time": user_input_time,
+                        "step_inputs": {},
+                        "step_outputs": user_inputs,
+                        "error": None,
+                    },
+                ],
             },
         )
 
-        def resolve_value(value):
+        def outputs_for_iteration(step_id: str, iteration: int) -> Any:
+            """Returns an upstream step's outputs for the given iteration.
+
+            Falls back to that step's last available iteration when it ran
+            fewer times than the step currently being resolved.
+            """
+            iterations = previous_outputs.get(step_id)
+            if not iterations:
+                return {}
+            if iteration < len(iterations):
+                return iterations[iteration] or {}
+            return iterations[-1] or {}
+
+        def resolve_value(value, iteration: int = 0):
             if isinstance(value, StepOutputReference):
-                return previous_outputs.get(value.step, {}).get(value.output)
+                return outputs_for_iteration(value.step, iteration).get(
+                    value.output
+                )
             if (
                 isinstance(value, dict)
                 and "step" in value
                 and "output" in value
             ):
-                return previous_outputs.get(value["step"], {}).get(
+                return outputs_for_iteration(value["step"], iteration).get(
                     value["output"]
                 )
             if isinstance(value, list):
-                return [resolve_value(item) for item in value]
-            else:
-                return value
+                return [resolve_value(item, iteration) for item in value]
+            return value
 
-            step_outs = previous_outputs.get(ref_step, {})
-            if ref_output in step_outs:
-                return step_outs[ref_output]
-            alt_key = ref_output.replace(" ", "_")
-            if alt_key in step_outs:
-                return step_outs[alt_key]
-            for k, v in step_outs.items():
-                if (
-                    k.lower() == ref_output.lower()
-                    or k.lower() == alt_key.lower()
-                ):
-                    return v
-            return None
-
-        for entry in step_entries:
-            step_id = entry.get("step")
-            if step_id == "end":
-                continue
-
-            # Find the step definition
-            current_step = next(
-                (
-                    step
-                    for step in workflow_model.steps
-                    if step.step_id == step_id
-                ),
-                None,
-            )
-            if not current_step:
-                continue
-
-            step_state = entry.get("state")
-
+        def resolve_step_inputs(current_step, iteration: int) -> dict:
+            """Resolves one iteration's inputs from the step definition."""
             # Extract inputs from step
             raw_inputs = (
                 current_step.inputs.model_dump()
@@ -862,7 +903,7 @@ class WorkflowService:
                     else {}
                 )
             )
-            step_inputs = {}
+            step_inputs: dict[str, Any] = {}
 
             if current_step.type == NodeTypes.IMAGE:
                 settings_mode = (
@@ -879,11 +920,15 @@ class WorkflowService:
                 )
                 for inp_name, inp_value in raw_inputs.items():
                     if inp_name in allowed_inputs and inp_value is not None:
-                        step_inputs[inp_name] = resolve_value(inp_value)
+                        step_inputs[inp_name] = resolve_value(
+                            inp_value, iteration
+                        )
             else:
                 for inp_name, inp_value in raw_inputs.items():
                     if inp_value is not None:
-                        step_inputs[inp_name] = resolve_value(inp_value)
+                        step_inputs[inp_name] = resolve_value(
+                            inp_value, iteration
+                        )
 
                 if current_step.type == NodeTypes.GENERATE_TEXT:
                     prompt_val = step_inputs.get("prompt")
@@ -893,12 +938,19 @@ class WorkflowService:
                                 prompt_val, step_inputs
                             )
                         )
+            return step_inputs
 
-            # Extract outputs from step
-            variable_data = entry.get("variableData", {})
-            variables = variable_data.get("variables", {})
-            step_results = variables.get(f"{step_id}_result", {})
-            raw_outputs = step_results.get("body", {})
+        def extract_step_outputs(current_step, entry, base_step_id) -> Any:
+            """Reads one entry's outputs from its own variable snapshot."""
+            emitted_name = entry.get("step") or base_step_id
+            variable_data = entry.get("variableData", {}) or {}
+            variables = variable_data.get("variables", {}) or {}
+            # Each emitted iteration has its own result variable; fall back to
+            # the base name for entries produced before this MVP existed.
+            step_results = variables.get(f"{emitted_name}_result")
+            if step_results is None:
+                step_results = variables.get(f"{base_step_id}_result", {})
+            raw_outputs = (step_results or {}).get("body", {})
 
             if current_step.type == NodeTypes.IMAGE and isinstance(
                 raw_outputs, dict
@@ -909,23 +961,85 @@ class WorkflowService:
                     or raw_outputs.get("upscaled_image")
                     or raw_outputs.get("image_output")
                 )
-                step_outputs = (
+                return (
                     {"generated_image": img_val} if img_val is not None else {}
                 )
-            else:
-                step_outputs = raw_outputs
+            return raw_outputs
 
-            # Store outputs for subsequent steps
-            previous_outputs[step_id] = step_outputs
+        # `entryId` is monotonic per execution, so it is the natural sort key.
+        # If any entry lacks it, keep the order returned by the API instead.
+        def entry_sort_key(entry) -> int | None:
+            try:
+                return int(entry.get("entryId"))
+            except (TypeError, ValueError):
+                return None
 
+        if step_entries and all(
+            entry_sort_key(entry) is not None for entry in step_entries
+        ):
+            ordered_entries = sorted(step_entries, key=entry_sort_key)  # type: ignore[arg-type,return-value]
+        else:
+            ordered_entries = list(step_entries)
+
+        # Group the entries of a logical step together: `{step}__iter_k` and
+        # `{step}` all belong to the same base step id.
+        steps_by_id = {step.step_id: step for step in workflow_model.steps}
+        grouped_entries: dict[str, list[dict[str, Any]]] = {}
+        group_order: list[str] = []
+        for entry in ordered_entries:
+            emitted_name = entry.get("step")
+            if not emitted_name or emitted_name == "end":
+                continue
+            base_step_id, _iteration = parse_iteration_step_name(emitted_name)
+            if base_step_id not in steps_by_id:
+                continue
+            if base_step_id not in grouped_entries:
+                grouped_entries[base_step_id] = []
+                group_order.append(base_step_id)
+            grouped_entries[base_step_id].append(entry)
+
+        for base_step_id in group_order:
+            current_step = steps_by_id[base_step_id]
+            history: list[dict[str, Any]] = []
+
+            for iteration, entry in enumerate(grouped_entries[base_step_id]):
+                step_inputs = resolve_step_inputs(current_step, iteration)
+                step_outputs = extract_step_outputs(
+                    current_step, entry, base_step_id
+                )
+
+                # Store this iteration's outputs for subsequent steps.
+                previous_outputs.setdefault(base_step_id, []).append(
+                    step_outputs
+                )
+
+                history.append(
+                    {
+                        "iteration": iteration,
+                        "state": entry.get("state"),
+                        "start_time": entry.get("createTime"),
+                        "end_time": entry.get("updateTime"),
+                        "step_inputs": step_inputs,
+                        "step_outputs": step_outputs,
+                        # A failed iteration returns an empty variableData, so
+                        # without this it would render as an empty row.
+                        "error": entry.get("exception"),
+                    },
+                )
+
+            last_iteration = history[-1]
             formatted_step_entries.append(
                 {
-                    "step_id": step_id,
-                    "state": step_state,
-                    "step_inputs": step_inputs,
-                    "step_outputs": step_outputs,
-                    "start_time": entry.get("createTime"),
-                    "end_time": entry.get("updateTime"),
+                    "step_id": base_step_id,
+                    "state": last_iteration["state"],
+                    # NOTE: kept for backwards compatibility with the current
+                    # frontend (mirrors the LAST iteration). Drop them once the
+                    # UI consumes `history[]`.
+                    "step_inputs": last_iteration["step_inputs"],
+                    "step_outputs": last_iteration["step_outputs"],
+                    "start_time": history[0]["start_time"],
+                    "end_time": last_iteration["end_time"],
+                    "history": history,
                 },
             )
 

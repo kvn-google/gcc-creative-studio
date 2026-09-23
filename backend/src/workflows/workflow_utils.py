@@ -16,6 +16,55 @@
 import re
 from typing import Any
 
+from src.workflows.workflow_constants import MVP_ITERATION_SUFFIX
+
+
+def build_iteration_step_name(
+    step_id: str,
+    iteration: int,
+    total: int,
+) -> str:
+    """Builds the Cloud Workflows step name for one MVP iteration.
+
+    MVP ONLY (temporary loop simulation). Cloud Workflows rejects duplicate
+    step names, so every repeated copy but the last one gets a
+    ``{step_id}__iter_{k}`` name. The LAST iteration keeps the original
+    ``{step_id}`` name so downstream ``${step_id_result...}`` references keep
+    working unchanged ("last iteration wins").
+
+    Args:
+        step_id: The logical step id from the workflow definition.
+        iteration: Zero-based index of this copy.
+        total: Total number of copies emitted for this step.
+
+    Returns:
+        The step name to emit in the generated YAML.
+    """
+    if total <= 1 or iteration >= total - 1:
+        return step_id
+    return f"{step_id}{MVP_ITERATION_SUFFIX}{iteration}"
+
+
+def parse_iteration_step_name(emitted_name: str) -> tuple[str, int | None]:
+    """Splits an emitted step name back into its base id and iteration.
+
+    MVP ONLY (temporary loop simulation).
+
+    Args:
+        emitted_name: The step name as reported by Cloud Workflows.
+
+    Returns:
+        A ``(base_step_id, iteration)`` tuple. ``iteration`` is ``None`` when
+        the name carries no ``__iter_k`` suffix (i.e. the final iteration, or
+        a step emitted before this MVP existed).
+    """
+    if not emitted_name:
+        return emitted_name, None
+    base, separator, suffix = emitted_name.rpartition(MVP_ITERATION_SUFFIX)
+    if separator and base and suffix.isdigit():
+        return base, int(suffix)
+    return emitted_name, None
+
 
 def interpolate_prompt_variables(
     prompt: str,

@@ -14,6 +14,14 @@
 """Constants for workflows."""
 
 from enum import Enum
+import os
+
+# MVP ONLY: statically repeat every non-user-input step N times in the
+# generated Cloud Workflows YAML, to observe how GCP records step entries
+# for a step that executes more than once. Set to 1 to restore the old
+# single-execution behaviour. Remove when real loop nodes are implemented.
+MVP_STEP_REPEAT_COUNT = int(os.getenv("MVP_STEP_REPEAT_COUNT", "2"))
+MVP_ITERATION_SUFFIX = "__iter_"
 
 
 class ImageModeEnum(str, Enum):

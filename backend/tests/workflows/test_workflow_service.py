@@ -37,6 +37,7 @@ from src.workflows.schema.workflow_model import (
 from src.workflows.schema.workflow_run_model import (
     WorkflowRunStatusEnum,
 )
+from src.workflows.workflow_constants import MVP_STEP_REPEAT_COUNT
 from src.workflows.workflow_service import WorkflowService
 
 
@@ -136,9 +137,11 @@ class TestWorkflowServiceConfig:
         assert "steps" in parsed["main"]
 
         steps = parsed["main"]["steps"]
-        assert len(steps) == 1
+        # MVP: every step is emitted MVP_STEP_REPEAT_COUNT times; the LAST
+        # copy keeps the original step name.
+        assert len(steps) == MVP_STEP_REPEAT_COUNT
 
-        step_1_wrapper = steps[0]
+        step_1_wrapper = steps[-1]
         assert "step_1" in step_1_wrapper
 
         step_1 = step_1_wrapper["step_1"]
@@ -175,9 +178,9 @@ class TestWorkflowServiceConfig:
         parsed = yaml.safe_load(yaml_output)
 
         steps = parsed["main"]["steps"]
-        assert len(steps) == 1
-        assert "image_step_1" in steps[0]
-        image_step = steps[0]["image_step_1"]
+        assert len(steps) == MVP_STEP_REPEAT_COUNT
+        assert "image_step_1" in steps[-1]
+        image_step = steps[-1]["image_step_1"]
         assert image_step["call"] == "http.post"
         assert image_step["args"]["url"].endswith("/image")
         assert image_step["args"]["body"]["config"]["mode"] == "generate_image"
@@ -218,9 +221,9 @@ class TestWorkflowServiceConfig:
         parsed = yaml.safe_load(yaml_output)
 
         steps = parsed["main"]["steps"]
-        assert len(steps) == 1
-        assert "step_gen_text" in steps[0]
-        step_entry = steps[0]["step_gen_text"]
+        assert len(steps) == MVP_STEP_REPEAT_COUNT
+        assert "step_gen_text" in steps[-1]
+        step_entry = steps[-1]["step_gen_text"]
         assert step_entry["call"] == "http.post"
         assert step_entry["args"]["url"].endswith("/generate_text")
         inputs_body = step_entry["args"]["body"]["inputs"]
