@@ -148,4 +148,30 @@ describe('StepHistorySidebarComponent', () => {
 
     expect(closedSpy).toHaveBeenCalled();
   });
+
+  describe('layout', () => {
+    /** z-index of the workflow editor header (`.header-section`). */
+    const EDITOR_HEADER_Z_INDEX = 100;
+
+    it('is a full-height fixed panel stacked above the editor header', () => {
+      component.entry = buildEntry([iteration(1)]);
+      fixture.detectChanges();
+
+      const style = getComputedStyle(element);
+      expect(element.classList).not.toContain('embedded');
+      expect(style.position).toBe('fixed');
+      expect(style.top).toBe('0px');
+      expect(style.bottom).toBe('0px');
+      expect(Number(style.zIndex)).toBeGreaterThan(EDITOR_HEADER_Z_INDEX);
+    });
+
+    it('fills its container when embedded in an overlay pane', () => {
+      component.entry = buildEntry([iteration(1)]);
+      component.embedded = true;
+      fixture.detectChanges();
+
+      expect(element.classList).toContain('embedded');
+      expect(getComputedStyle(element).position).toBe('relative');
+    });
+  });
 });

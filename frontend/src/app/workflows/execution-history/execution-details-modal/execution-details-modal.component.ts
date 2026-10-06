@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import {Component, Inject, OnInit, computed, signal} from '@angular/core';
+import {
+  Component,
+  Inject,
+  OnInit,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import {
   AbstractControl,
   FormBuilder,
@@ -22,7 +29,11 @@ import {
   FormGroup,
   ValidationErrors,
 } from '@angular/forms';
-import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
+import {
+  MAT_DIALOG_DATA,
+  MatDialog,
+  MatDialogRef,
+} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {Router} from '@angular/router';
 import {GalleryService} from '../../../gallery/gallery.service';
@@ -47,6 +58,11 @@ import {
 import {WorkflowService} from '../../workflow.service';
 import {mergeLiveStepEntries} from '../../utils/step-history.util';
 import {getLoopBodies, LoopGraphStep} from '../../utils/workflow-loop.util';
+import {StepHistorySidebarDialogComponent} from '../../workflow-editor/step-history-sidebar/step-history-sidebar-dialog.component';
+import {
+  STEP_HISTORY_SIDEBAR_PANEL_CLASS,
+  StepHistorySidebarDialogData,
+} from '../../workflow-editor/step-history-sidebar/step-history-sidebar.models';
 
 export interface ExecutionDetailsDialogData {
   workflowId: string;
@@ -135,6 +151,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
   mediaUrlMap = new Map<string, string>();
   loadedMedia = new Set<string>();
   NodeTypes = NodeTypes;
+  private readonly dialog = inject(MatDialog);
 
   /** Backwards-compatible getter/setter for specs accessing `component.details`. */
   get details(): WorkflowRunDetail | null {
@@ -461,6 +478,46 @@ export class ExecutionDetailsModalComponent implements OnInit {
       next.add(stepId);
     }
     this.expandedStepIds.set(next);
+  }
+
+  /** Chevron click: toggles the inline details without opening the sidebar. */
+  onToggleStepClick(event: Event, stepId: string): void {
+    event.stopPropagation();
+    this.toggleStep(stepId);
+  }
+
+  /** Enter on the focused header opens the sidebar (ignores nested buttons). */
+  onStepHeaderKeydown(event: Event, step: RunStepViewModel): void {
+    if (event.target !== event.currentTarget) return;
+    this.openStepHistory(step);
+  }
+
+  /**
+   * Opens the step history sidebar for `step` as an overlay stacked above this
+   * modal (which stays open behind it). The entry is a live computed signal,
+   * so polled updates of this run keep flowing into the sidebar.
+   */
+  openStepHistory(step: RunStepViewModel): void {
+    const stepId = step.stepId;
+    const data: StepHistorySidebarDialogData = {
+      entry: computed(
+        () => this.mergedStepEntries().find(e => e.step_id === stepId) ?? null,
+      ),
+      stepType: step.stepType,
+      stepTitle: stepId,
+      stepMode: step.stepMode,
+      mediaUrlMap: this.mediaUrlMap,
+    };
+    this.dialog.open(StepHistorySidebarDialogComponent, {
+      data,
+      position: {top: '0', right: '0'},
+      height: '100vh',
+      maxHeight: '100vh',
+      maxWidth: '100vw',
+      autoFocus: false,
+      panelClass: STEP_HISTORY_SIDEBAR_PANEL_CLASS,
+      backdropClass: 'cdk-overlay-transparent-backdrop',
+    });
   }
 
   toggleResumeForm(): void {

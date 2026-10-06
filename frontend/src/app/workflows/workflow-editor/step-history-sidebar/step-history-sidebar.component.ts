@@ -17,6 +17,7 @@
 import {
   Component,
   EventEmitter,
+  HostBinding,
   Input,
   Output,
   computed,
@@ -79,6 +80,14 @@ export class StepHistorySidebarComponent {
   /** Active step mode (e.g. image generation mode) used to filter inputs. */
   @Input() stepMode: string | null = null;
   @Input() mediaUrlMap: Map<string, string> = new Map();
+
+  /**
+   * When true the sidebar fills its container (e.g. a CDK overlay pane opened
+   * above a dialog) instead of fixing itself to the editor viewport.
+   */
+  @Input()
+  @HostBinding('class.embedded')
+  embedded = false;
 
   @Output() readonly closed = new EventEmitter<void>();
 
