@@ -177,6 +177,9 @@ def build_execution_args(
 
     steps = _snapshot_steps(run.workflow_snapshot)
     if steps:
+        # Reads step_states via the step_state_keys helpers: only top-level
+        # "<step_id>" records gate steps; "<step_id>#<n>" loop iteration
+        # records are never part of prior_outputs.
         args.update(prior_outputs_args(steps, run.step_states))
     return args
 

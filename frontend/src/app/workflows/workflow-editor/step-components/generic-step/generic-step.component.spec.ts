@@ -38,6 +38,13 @@ import {StepInput} from './step.model';
 import {StudioSliderComponent} from '../../../../common/components/studio-slider/studio-slider.component';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {GenericStepComponent} from './generic-step.component';
+import {of} from 'rxjs';
+import {FolderService} from '../../../../common/services/folder.service';
+import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
+import {
+  LOOP_STEP_CONFIG,
+  MAX_LOOP_ITEMS,
+} from '../step-configs/loop-step.config';
 
 describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
   let component: GenericStepComponent;
@@ -60,7 +67,28 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         NoopAnimationsModule,
         WorkflowStatusPipe,
       ],
-      providers: [FormBuilder],
+      providers: [
+        FormBuilder,
+        {
+          provide: FolderService,
+          useValue: jasmine.createSpyObj<FolderService>('FolderService', {
+            getFolderTree: of([
+              {
+                id: 7,
+                name: 'Campaign',
+                children: [{id: 8, name: 'Shots', children: []}],
+              },
+            ]),
+          }),
+        },
+        {
+          provide: WorkspaceStateService,
+          useValue: jasmine.createSpyObj<WorkspaceStateService>(
+            'WorkspaceStateService',
+            {getActiveWorkspaceId: 1},
+          ),
+        },
+      ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
@@ -1277,6 +1305,139 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(component.isCollapsed).toBeFalse();
       expect(component.stepForm.get('collapsed')?.value).toBeFalse();
       expect(component.collapseChange.emit).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe('Loop Node', () => {
+    const query = (selector: string): HTMLElement | null =>
+      fixture.nativeElement.querySelector(selector);
+
+    function initLoopStep(mode: string, itemType = 'image'): FormGroup {
+      const loopForm = fb.group({
+        stepId: ['loop_1'],
+        type: [NodeTypes.LOOP],
+        status: ['idle'],
+        collapsed: [false],
+        inputs: fb.group({
+          items_text: [''],
+          loop_ending: [null],
+        }),
+        settings: fb.group({
+          mode: [mode],
+          folder_id: [null],
+          item_type: [itemType],
+        }),
+        outputs: fb.group({
+          current_item: [{type: itemType}],
+        }),
+      });
+      component.stepForm = loopForm;
+      component.config = LOOP_STEP_CONFIG;
+      component.ngOnChanges({
+        stepForm: {
+          currentValue: loopForm,
+          previousValue: null,
+          firstChange: false,
+          isFirstChange: () => false,
+        },
+      });
+      fixture.detectChanges();
+      return loopForm;
+    }
+
+    const findSetting = (name: string) =>
+      component.localConfig.settings.find(s => s.name === name);
+    const findInput = (name: string) =>
+      component.localConfig.inputs.find(i => i.name === name);
+    const currentItemType = () =>
+      component.localConfig.outputs.find(o => o.name === 'current_item')?.type;
+
+    it('shows folder settings and hides items_text in folder mode', () => {
+      initLoopStep('folder', 'video');
+
+      expect(findSetting('folder_id')?.hidden).toBeFalsy();
+      expect(findSetting('item_type')?.hidden).toBeFalsy();
+      expect(findInput('items_text')?.hidden).toBeTrue();
+      expect(component.stepForm.get('inputs.items_text')?.disabled).toBeTrue();
+      expect(currentItemType()).toBe('video');
+    });
+
+    it('switches to text_input mode with a text current_item port', () => {
+      const loopForm = initLoopStep('folder');
+      loopForm.get('settings.mode')?.setValue('text_input');
+
+      expect(findSetting('folder_id')?.hidden).toBeTrue();
+      expect(findSetting('item_type')?.hidden).toBeTrue();
+      expect(findInput('items_text')?.hidden).toBeFalse();
+      expect(findInput('items_text')?.required).toBeTrue();
+      expect(component.stepForm.get('inputs.items_text')?.enabled).toBeTrue();
+      expect(currentItemType()).toBe('text');
+      expect(loopForm.get('outputs.current_item')?.value).toEqual({
+        type: 'text',
+      });
+    });
+
+    it('updates the current_item type when item_type changes', () => {
+      const loopForm = initLoopStep('folder');
+      loopForm.get('settings.item_type')?.setValue('audio');
+      expect(currentItemType()).toBe('audio');
+    });
+
+    it('loads workspace folders as flattened dropdown options', () => {
+      initLoopStep('folder');
+      expect(findSetting('folder_id')?.options).toEqual([
+        {value: 7, label: 'Campaign'},
+        {value: 8, label: 'Campaign / Shots'},
+      ]);
+    });
+
+    it('always shows the static max loops hint', () => {
+      initLoopStep('folder');
+      expect(query('#loop-capacity-hint-loop_1')?.textContent).toContain(
+        `Max ${MAX_LOOP_ITEMS} loops`,
+      );
+    });
+
+    it('marks loop_ending as a linked-only input', () => {
+      initLoopStep('folder');
+      expect(findInput('loop_ending')?.linkedOnly).toBeTrue();
+      expect(component.inputModes['loop_ending']).toBe('linked');
+    });
+  });
+
+  describe('Execution preview visibility', () => {
+    const entry = {
+      step_id: 'image_step_1',
+      state: 'COMPLETED',
+      attempts: 1,
+      history: [
+        {step_inputs: {prompt: 'a'}, step_outputs: {generated_image: [1]}},
+        {step_inputs: {prompt: 'b'}, step_outputs: {generated_image: [2]}},
+      ],
+    };
+
+    it('binds the latest history entry outputs', () => {
+      component.stepExecution = entry;
+      expect(component.latestStepOutputs()).toEqual({generated_image: [2]});
+      expect(component.latestStepInputs()).toEqual({prompt: 'b'});
+      expect(component.showExecutionResults()).toBeTrue();
+    });
+
+    it('hides the output preview when an output is linked', () => {
+      component.stepExecution = entry;
+      component.isOutputLinked = true;
+      expect(component.showOutputPreview()).toBeFalse();
+      expect(component.showExecutionResults()).toBeFalse();
+    });
+
+    it('still shows errors when an output is linked', () => {
+      component.stepExecution = {
+        ...entry,
+        state: 'FAILED',
+        last_error: {category: 'TRANSIENT', detail: 'boom'},
+      };
+      component.isOutputLinked = true;
+      expect(component.showExecutionResults()).toBeTrue();
     });
   });
 });

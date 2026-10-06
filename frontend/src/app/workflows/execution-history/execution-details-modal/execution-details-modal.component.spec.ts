@@ -291,4 +291,92 @@ describe('ExecutionDetailsModalComponent', () => {
     expect(textContent).toContain('Snapshot Workflow');
     expect(textContent.toLowerCase()).not.toContain('legacy');
   });
+
+  it('groups loop iteration step_states into per-step history iterations', () => {
+    const loopRun: WorkflowRunDetail = {
+      id: 'run-loop',
+      workflow_id: 'wf-1',
+      status: WorkflowRunStatusEnum.RUNNING,
+      workflow_snapshot: {
+        id: 'wf-1',
+        name: 'Loop Workflow',
+        description: '',
+        createdAt: '2026-04-19T00:00:00Z',
+        updatedAt: '2026-04-19T00:00:00Z',
+        userId: '1',
+        steps: [
+          {
+            stepId: 'loop_1',
+            type: NodeTypes.LOOP,
+            status: 'IDLE',
+            position: {x: 0, y: 0},
+            collapsed: false,
+            inputs: {loop_ending: {step: 'gen_image', output: 'loop_ending'}},
+            outputs: {},
+            settings: {mode: 'folder', item_type: 'image'},
+          },
+          {
+            stepId: 'gen_image',
+            type: NodeTypes.IMAGE,
+            status: 'IDLE',
+            position: {x: 400, y: 0},
+            collapsed: false,
+            inputs: {input_images: {step: 'loop_1', output: 'current_item'}},
+            outputs: {},
+            settings: {mode: 'edit_image'},
+          },
+        ],
+      },
+      step_states: {
+        loop_1: {
+          status: 'COMPLETED',
+          inputs: {mode: 'folder', folder_name: 'Photos', item_type: 'image'},
+          outputs: {items: [[101], [102]], total_iterations: 2},
+        },
+        'gen_image#0': {
+          status: 'COMPLETED',
+          inputs: {input_images: [101]},
+          outputs: {generated_image: [501]},
+        },
+        'gen_image#1': {status: 'RUNNING'},
+      },
+    };
+
+    component.runDetails.set(loopRun);
+    component.workflowSignal.set(loopRun.workflow_snapshot ?? null);
+    component.expandedStepIds.set(new Set(['loop_1', 'gen_image']));
+    fixture.detectChanges();
+
+    const steps = component.stepViewModels();
+    expect(steps.map(s => s.stepId)).toEqual(['loop_1', 'gen_image']);
+    expect(steps[0].status).toBe('RUNNING');
+    expect(steps[0].iterations.length).toBe(1);
+    expect(steps[0].iterations[0].label).toBeNull();
+    expect(steps[1].iterations.length).toBe(1);
+    expect(steps[1].outputs).toEqual({generated_image: [501]});
+
+    component.runDetails.set({
+      ...loopRun,
+      step_states: {
+        ...loopRun.step_states,
+        'gen_image#1': {
+          status: 'COMPLETED',
+          inputs: {input_images: [102]},
+          outputs: {generated_image: [502]},
+        },
+      },
+    });
+    fixture.detectChanges();
+
+    const genImage = component.stepViewModels()[1];
+    expect(genImage.iterations.map(i => i.label)).toEqual([
+      'Iteration 1',
+      'Iteration 2',
+    ]);
+    expect(genImage.outputs).toEqual({generated_image: [502]});
+    expect(component.stepViewModels()[0].status).toBe('COMPLETED');
+    expect(
+      fixture.nativeElement.querySelector('#modal-step-iteration-gen_image-1'),
+    ).not.toBeNull();
+  });
 });

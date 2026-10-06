@@ -106,6 +106,7 @@ import {BatchExecutionModalComponent} from './workflows/execution-history/batch-
 import {ExecutionDetailsModalComponent} from './workflows/execution-history/execution-details-modal/execution-details-modal.component';
 import {ExecutionHistoryComponent} from './workflows/execution-history/execution-history.component';
 import {StepExecutionDetailsComponent} from './workflows/shared/step-execution-details/step-execution-details.component';
+import {StepHistorySidebarComponent} from './workflows/workflow-editor/step-history-sidebar/step-history-sidebar.component';
 import {AddStepModalComponent} from './workflows/workflow-editor/add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './workflows/workflow-editor/run-workflow-modal/run-workflow-modal.component';
 import {StepInputFieldComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-input-field/step-input-field.component';
@@ -156,6 +157,7 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     ExecutionHistoryComponent,
     ExecutionDetailsModalComponent,
     StepExecutionDetailsComponent,
+    StepHistorySidebarComponent,
     BatchExecutionModalComponent,
     UpscaleComponent,
     ProjectsComponent,

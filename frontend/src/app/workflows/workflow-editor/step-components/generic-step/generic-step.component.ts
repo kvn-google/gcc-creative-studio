@@ -23,6 +23,9 @@ import {
   OnInit,
   Output,
   SimpleChanges,
+  computed,
+  inject,
+  signal,
 } from '@angular/core';
 import {FormBuilder, FormGroup, Validators} from '@angular/forms';
 import {Subscription} from 'rxjs';
@@ -33,13 +36,32 @@ import {
   MODEL_CONFIGS,
   isGeminiOmniModel,
 } from '../../../../common/config/model-config';
+import {FolderTreeNode} from '../../../../common/models/folder.model';
+import {FolderService} from '../../../../common/services/folder.service';
+import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
 import {StepConfig, StepInput, StepSetting} from './step.model';
 import {
+  DynamicStepRecord,
   NodeTypes,
+  StepEntry,
   StepOutputReference,
   StepStatusEnum,
 } from '../../../workflow.models';
 import {isStepOutputReference} from '../../../utils/workflow-step.util';
+import {
+  getLatestStepInputs,
+  getLatestStepOutputs,
+} from '../../../utils/step-history.util';
+import {
+  LOOP_CURRENT_ITEM_PORT,
+  LOOP_FOLDER_SETTING,
+  LOOP_ITEMS_TEXT_INPUT,
+  LOOP_ITEM_TYPE_SETTING,
+  LOOP_MODE_TEXT_INPUT,
+  MAX_LOOP_ITEMS,
+  getLoopCurrentItemType,
+  toLoopMode,
+} from '../step-configs/loop-step.config';
 import {
   DragSourcePort,
   getMaxAllowedInputs,
@@ -50,6 +72,14 @@ import {
   isPortTypeCompatible,
   PortShortType,
 } from '../../../utils/workflow-magnetic.util';
+
+/** Option shown in the Loop step's Media Gallery folder dropdown. */
+interface FolderOption {
+  value: number;
+  label: string;
+}
+
+const FOLDER_PATH_SEPARATOR = ' / ';
 
 @Component({
   selector: 'app-generic-step',
@@ -63,13 +93,34 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   @Input() mode: 'create' | 'edit' | 'run' = 'create';
   @Input() config!: StepConfig;
   @Input() showValidationErrors = false;
-  @Input() stepExecution: any = null;
   @Input() mediaUrlMap!: Map<string, string>;
   @Input() isSelected = false;
   @Input() isHighlighted = false;
   @Input() activeMagneticPort: {stepId: string; inputName: string} | null =
     null;
   @Input() dragSourcePort: DragSourcePort | null = null;
+
+  private readonly stepExecutionState = signal<StepEntry | null>(null);
+  private readonly outputLinkedState = signal<boolean>(false);
+
+  /** Execution entry for this step in the selected run (history-based). */
+  @Input() set stepExecution(value: StepEntry | null) {
+    this.stepExecutionState.set(value ?? null);
+  }
+  get stepExecution(): StepEntry | null {
+    return this.stepExecutionState();
+  }
+
+  /**
+   * True when ANY output port of this step (incl. `loop_ending` and Loop
+   * `current_item`) is wired to another step. Linked steps hide output previews.
+   */
+  @Input() set isOutputLinked(value: boolean) {
+    this.outputLinkedState.set(!!value);
+  }
+  get isOutputLinked(): boolean {
+    return this.outputLinkedState();
+  }
 
   @Output() delete = new EventEmitter<void>();
   @Output() clone = new EventEmitter<void>();
@@ -83,21 +134,61 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
   StepStatusEnum = StepStatusEnum;
   NodeTypes = NodeTypes;
+  readonly maxLoopItems = MAX_LOOP_ITEMS;
+
+  /** Outputs of the latest (last) history entry, bound to the card preview. */
+  readonly latestStepOutputs = computed<DynamicStepRecord>(() =>
+    getLatestStepOutputs(this.stepExecutionState()),
+  );
+
+  /**
+   * Inputs of the latest history entry. Not rendered on the card, but needed
+   * so Loop folder-mode items preview as media of the run's `item_type`.
+   */
+  readonly latestStepInputs = computed<DynamicStepRecord>(() =>
+    getLatestStepInputs(this.stepExecutionState()),
+  );
+
+  /** Error reported by the run for this step (always surfaced on the card). */
+  readonly stepExecutionError = computed(() => {
+    const exec = this.stepExecutionState();
+    return exec?.last_error ?? exec?.error ?? null;
+  });
+
+  /** Output preview is only shown for unlinked (terminal) steps. */
+  readonly showOutputPreview = computed(() => !this.outputLinkedState());
+
+  /**
+   * Render the Results section for unlinked (terminal) steps, or for linked
+   * steps only when an error banner must be surfaced.
+   */
+  readonly showExecutionResults = computed(() => {
+    const exec = this.stepExecutionState();
+    if (!exec) return false;
+    if (this.stepExecutionError()) return true;
+    if (!this.showOutputPreview()) return false;
+    const hasOutputs = Object.keys(this.latestStepOutputs()).length > 0;
+    return hasOutputs || (exec.attempts ?? 0) > 0;
+  });
 
   localConfig!: StepConfig;
+  isLoopStep = false;
+  private readonly fb = inject(FormBuilder);
+  private readonly folderService = inject(FolderService);
+  private readonly workspaceStateService = inject(WorkspaceStateService);
   private settingsSubscription?: Subscription;
   private inputModeSubscription?: Subscription;
   private modeSubscription?: Subscription;
   private inputsSubscription?: Subscription;
   private collapsedSubscription?: Subscription;
+  private loopItemTypeSubscription?: Subscription;
+  private foldersSubscription?: Subscription;
   currentMaxReferenceImages = 1;
 
   isCollapsed = false;
   inputModes: {[key: string]: 'fixed' | 'linked' | 'mixed'} = {};
   compatibleOutputs: {[key: string]: any[]} = {};
   newVariableName = '';
-
-  constructor(private fb: FormBuilder) {}
 
   toggleCollapse(event?: Event): void {
     if (event) {
@@ -247,6 +338,8 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (this.collapsedSubscription) {
       this.collapsedSubscription.unsubscribe();
     }
+    this.loopItemTypeSubscription?.unsubscribe();
+    this.foldersSubscription?.unsubscribe();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -273,6 +366,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
     // Deep copy config to localConfig to allow per-instance modifications
     this.localConfig = JSON.parse(JSON.stringify(this.config));
+    this.isLoopStep = this.localConfig.type === NodeTypes.LOOP;
 
     this.inputModes = {};
 
@@ -296,7 +390,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       // It must be an object, not an array, and have 'step' and 'output' properties
       const isLinked = isStepOutputReference(value);
 
-      if (isLinked) {
+      if (isLinked || input.linkedOnly) {
         this.inputModes[input.name] = 'linked';
       } else if (Array.isArray(value)) {
         this.inputModes[input.name] = 'mixed';
@@ -398,10 +492,15 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         }
         this.modeSubscription = modeControl?.valueChanges.subscribe(value => {
           this.updateImageModeConfig(value);
+          this.updateLoopModeConfig();
         });
 
         // Initial update
         this.updateImageModeConfig(modeControl?.value);
+      }
+
+      if (this.isLoopStep) {
+        this.initializeLoopStep(settings);
       }
     }
 
@@ -775,6 +874,112 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     this.updateCompatibleOutputs();
+  }
+
+  private initializeLoopStep(settings: FormGroup): void {
+    this.loopItemTypeSubscription?.unsubscribe();
+    this.loopItemTypeSubscription = settings
+      .get(LOOP_ITEM_TYPE_SETTING)
+      ?.valueChanges.subscribe(() => this.updateLoopModeConfig());
+    this.updateLoopModeConfig();
+    this.loadLoopFolders();
+  }
+
+  /**
+   * Toggles Loop settings/inputs for the active source mode and keeps the
+   * `current_item` output port type in sync (`text` or the folder `item_type`).
+   */
+  private updateLoopModeConfig(): void {
+    if (!this.isLoopStep) return;
+    // getRawValue() reads child controls directly: a child control's
+    // valueChanges fires before the parent group's `value` is refreshed.
+    const settingsGroup = this.stepForm.get('settings') as FormGroup | null;
+    const settingsValue: DynamicStepRecord = settingsGroup?.getRawValue() ?? {};
+    const isTextMode =
+      toLoopMode(settingsValue['mode']) === LOOP_MODE_TEXT_INPUT;
+
+    this.localConfig.settings.forEach(setting => {
+      if (
+        setting.name === LOOP_FOLDER_SETTING ||
+        setting.name === LOOP_ITEM_TYPE_SETTING
+      ) {
+        setting.hidden = isTextMode;
+      }
+    });
+
+    const itemsTextInput = this.localConfig.inputs.find(
+      i => i.name === LOOP_ITEMS_TEXT_INPUT,
+    );
+    const itemsTextControl = this.stepForm
+      .get('inputs')
+      ?.get(LOOP_ITEMS_TEXT_INPUT);
+    if (itemsTextInput) {
+      itemsTextInput.hidden = !isTextMode;
+      itemsTextInput.required = isTextMode;
+    }
+    if (itemsTextControl) {
+      if (isTextMode) {
+        itemsTextControl.setValidators([Validators.required]);
+        if (!this.stepForm.disabled) {
+          itemsTextControl.enable({emitEvent: false});
+        }
+      } else {
+        itemsTextControl.clearValidators();
+        itemsTextControl.disable({emitEvent: false});
+      }
+      itemsTextControl.updateValueAndValidity({emitEvent: false});
+    }
+
+    const currentItemType = getLoopCurrentItemType(settingsValue);
+    const currentItemOutput = this.localConfig.outputs.find(
+      o => o.name === LOOP_CURRENT_ITEM_PORT,
+    );
+    if (currentItemOutput) {
+      currentItemOutput.type = currentItemType;
+    }
+    this.stepForm
+      .get('outputs')
+      ?.get(LOOP_CURRENT_ITEM_PORT)
+      ?.setValue({type: currentItemType}, {emitEvent: false});
+
+    this.updateCompatibleOutputs();
+  }
+
+  /** Populates the Loop folder dropdown with the active workspace's folders. */
+  private loadLoopFolders(): void {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId === null) return;
+    this.foldersSubscription?.unsubscribe();
+    this.foldersSubscription = this.folderService
+      .getFolderTree(workspaceId)
+      .subscribe({
+        next: tree => {
+          const folderSetting = this.localConfig.settings.find(
+            s => s.name === LOOP_FOLDER_SETTING,
+          );
+          if (folderSetting) {
+            folderSetting.options = this.flattenFolderTree(tree ?? []);
+          }
+        },
+        error: err => {
+          console.error('Failed to load Media Gallery folders', err);
+        },
+      });
+  }
+
+  private flattenFolderTree(
+    nodes: FolderTreeNode[],
+    parentPath = '',
+  ): FolderOption[] {
+    return nodes.flatMap(node => {
+      const label = parentPath
+        ? `${parentPath}${FOLDER_PATH_SEPARATOR}${node.name}`
+        : node.name;
+      return [
+        {value: node.id, label},
+        ...this.flattenFolderTree(node.children ?? [], label),
+      ];
+    });
   }
 
   getBaseInputs(): StepInput[] {

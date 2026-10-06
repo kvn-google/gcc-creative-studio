@@ -349,7 +349,10 @@
           class="output-row relative w-full flex items-center justify-between"
         >
           <div class="output-pill relative">
-            <mat-icon>{{ output.type }}</mat-icon> {{ output.label }}
+            <mat-icon>{{
+              output.type === 'loop_ending' ? 'loop' : output.type
+            }}</mat-icon>
+            {{ output.label }}
           </div>
           <div
             class="port output-port"
@@ -377,24 +380,33 @@
     </div>
 
     <!-- Execution Results embedded inside the Node -->
-    <div
-      class="section execution-results"
-      *ngIf="stepExecution && (stepExecution | keyvalue)?.length"
-    >
+    <div class="section execution-results" *ngIf="showExecutionResults()">
       <h3>Results</h3>
       <app-step-execution-details
         [stepId]="stepForm.value.stepId"
         [stepType]="stepForm.value.type"
-        [inputs]="stepExecution.step_inputs"
-        [outputs]="stepExecution.step_outputs"
+        [showInputs]="false"
+        [showOutputs]="showOutputPreview()"
+        [outputs]="latestStepOutputs()"
+        [inputs]="latestStepInputs()"
         [mediaUrlMap]="mediaUrlMap"
-        [attempts]="stepExecution.attempts ?? null"
-        [lastError]="stepExecution.last_error ?? stepExecution.error ?? null"
+        [attempts]="stepExecution?.attempts ?? null"
+        [error]="stepExecutionError()"
         [mode]="
           stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode
         "
       >
       </app-step-execution-details>
     </div>
+  </div>
+
+  <!-- Loop node static capacity hint (editor and run view) -->
+  <div
+    *ngIf="isLoopStep"
+    class="loop-capacity-hint"
+    [id]="'loop-capacity-hint-' + stepForm.value.stepId"
+  >
+    <mat-icon class="loop-capacity-icon">all_inclusive</mat-icon>
+    <span>Max {{ maxLoopItems }} loops</span>
   </div>
 </div>

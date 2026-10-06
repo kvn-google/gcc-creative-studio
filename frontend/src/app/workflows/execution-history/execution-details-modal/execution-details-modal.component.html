@@ -262,14 +262,30 @@
               <app-step-execution-details
                 [stepId]="step.stepId"
                 [stepType]="step.stepType"
-                [inputs]="step.inputs"
-                [outputs]="step.outputs"
                 [attempts]="step.attempts"
                 [lastError]="step.lastError"
-                [mediaUrlMap]="mediaUrlMap"
-                [mode]="step.stepMode"
+                [showInputs]="false"
+                [showOutputs]="false"
               >
               </app-step-execution-details>
+              <div
+                *ngFor="let iteration of step.iterations"
+                [id]="iteration.elementId"
+                class="modal-step-iteration"
+              >
+                <h4 *ngIf="iteration.label" class="modal-step-iteration-label">
+                  {{ iteration.label }}
+                </h4>
+                <app-step-execution-details
+                  [stepId]="step.stepId"
+                  [stepType]="step.stepType"
+                  [inputs]="iteration.inputs"
+                  [outputs]="iteration.outputs"
+                  [mediaUrlMap]="mediaUrlMap"
+                  [mode]="step.stepMode"
+                >
+                </app-step-execution-details>
+              </div>
             </div>
 
             <div

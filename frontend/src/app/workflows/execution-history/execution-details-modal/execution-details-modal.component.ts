@@ -40,12 +40,13 @@ import {
   QueueReason,
   StepEntry,
   StepErrorInfo,
-  StepState,
   WorkflowModel,
   WorkflowRunDetail,
   WorkflowRunStatusEnum,
 } from '../../workflow.models';
 import {WorkflowService} from '../../workflow.service';
+import {mergeLiveStepEntries} from '../../utils/step-history.util';
+import {getLoopBodies, LoopGraphStep} from '../../utils/workflow-loop.util';
 
 export interface ExecutionDetailsDialogData {
   workflowId: string;
@@ -54,15 +55,28 @@ export interface ExecutionDetailsDialogData {
   openResumeForm?: boolean;
 }
 
+/** One completed execution (history entry) of a step. */
+export interface RunStepIterationViewModel {
+  /** `"Iteration n"` when the step ran more than once, otherwise `null`. */
+  label: string | null;
+  elementId: string;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+}
+
 export interface RunStepViewModel {
   stepId: string;
   stepType: string;
-  stepMode: string | undefined;
+  stepMode: string | null;
   status: string;
   attempts: number;
   lastError: StepErrorInfo | null;
+  /** Latest history entry's inputs. */
   inputs: Record<string, unknown>;
+  /** Latest history entry's outputs. */
   outputs: Record<string, unknown>;
+  /** Every completed history entry, oldest first. */
+  iterations: RunStepIterationViewModel[];
   hasContent: boolean;
   isExpanded: boolean;
 }
@@ -206,63 +220,61 @@ export class ExecutionDetailsModalComponent implements OnInit {
     );
   });
 
+  /**
+   * Step entries with live `step_states` (including `"<step_id>#<n>"` loop
+   * iteration keys) merged into history-based entries.
+   */
+  readonly mergedStepEntries = computed<StepEntry[]>(() => {
+    const d = this.runDetails();
+    if (!d) return [];
+    const graphSteps: LoopGraphStep[] = (
+      this.workflowSignal()?.steps ?? []
+    ).map(step => ({
+      stepId: step.stepId,
+      type: step.type,
+      inputs: step.inputs ?? null,
+    }));
+    return mergeLiveStepEntries(d, getLoopBodies(graphSteps));
+  });
+
   readonly stepViewModels = computed<RunStepViewModel[]>(() => {
     const d = this.runDetails();
     if (!d) return [];
     const wf = this.workflowSignal();
     const expanded = this.expandedStepIds();
-
-    const stepStates: Record<string, StepState> =
-      d.step_states ?? d.stepStates ?? {};
-    const stepEntries: StepEntry[] = d.step_entries ?? d.stepEntries ?? [];
-    const stepStateKeys = Object.keys(stepStates);
+    const stepEntries = this.mergedStepEntries();
+    const entriesById = new Map(stepEntries.map(e => [e.step_id, e]));
 
     const orderedStepIds: string[] = [];
     const seen = new Set<string>();
+    const isUserInput = (stepId: string): boolean =>
+      wf?.steps?.find(s => s.stepId === stepId)?.type === NodeTypes.USER_INPUT;
 
-    if (wf?.steps?.length) {
-      for (const wfStep of wf.steps) {
-        if (wfStep.type === NodeTypes.USER_INPUT) continue;
-        if (
-          stepStateKeys.includes(wfStep.stepId) ||
-          stepEntries.some(e => e.step_id === wfStep.stepId)
-        ) {
-          orderedStepIds.push(wfStep.stepId);
-          seen.add(wfStep.stepId);
-        }
+    wf?.steps?.forEach(wfStep => {
+      if (wfStep.type === NodeTypes.USER_INPUT) return;
+      if (entriesById.has(wfStep.stepId)) {
+        orderedStepIds.push(wfStep.stepId);
+        seen.add(wfStep.stepId);
       }
-    }
+    });
 
-    for (const key of stepStateKeys) {
-      if (!seen.has(key)) {
-        const wfStep = wf?.steps?.find(s => s.stepId === key);
-        if (wfStep?.type === NodeTypes.USER_INPUT) continue;
-        orderedStepIds.push(key);
-        seen.add(key);
-      }
-    }
-
-    for (const entry of stepEntries) {
-      if (!seen.has(entry.step_id)) {
-        const wfStep = wf?.steps?.find(s => s.stepId === entry.step_id);
-        if (wfStep?.type === NodeTypes.USER_INPUT) continue;
-        orderedStepIds.push(entry.step_id);
-        seen.add(entry.step_id);
-      }
-    }
+    stepEntries.forEach(entry => {
+      if (seen.has(entry.step_id) || isUserInput(entry.step_id)) return;
+      orderedStepIds.push(entry.step_id);
+      seen.add(entry.step_id);
+    });
 
     return orderedStepIds.map(stepId => {
-      const state: StepState | undefined = stepStates[stepId];
-      const entry = stepEntries.find(e => e.step_id === stepId);
+      const entry = entriesById.get(stepId);
       const wfStep = wf?.steps?.find(s => s.stepId === stepId);
       const stepType = wfStep?.type ?? '';
-      const stepMode = wfStep?.settings?.['mode'] as string | undefined;
+      const rawMode = wfStep?.settings?.['mode'];
+      const stepMode = typeof rawMode === 'string' ? rawMode : null;
 
-      const status = state?.status ?? entry?.state ?? 'PENDING';
-      const attempts = state?.attempts ?? entry?.attempts ?? 0;
+      const status = entry?.state ?? 'PENDING';
+      const attempts = entry?.attempts ?? 0;
 
-      let lastError: StepErrorInfo | null =
-        state?.last_error ?? entry?.last_error ?? null;
+      let lastError: StepErrorInfo | null = entry?.last_error ?? null;
       if (!lastError && entry?.error) {
         if (typeof entry.error === 'string') {
           lastError = {category: 'ERROR', detail: entry.error};
@@ -271,9 +283,17 @@ export class ExecutionDetailsModalComponent implements OnInit {
         }
       }
 
-      const inputs: Record<string, unknown> = entry?.step_inputs ?? {};
-      const outputs: Record<string, unknown> =
-        state?.outputs ?? entry?.step_outputs ?? {};
+      const history = entry?.history ?? [];
+      const isMultiIteration = history.length > 1;
+      const iterations: RunStepIterationViewModel[] = history.map((h, idx) => ({
+        label: isMultiIteration ? `Iteration ${idx + 1}` : null,
+        elementId: `modal-step-iteration-${stepId}-${idx}`,
+        inputs: h.step_inputs ?? {},
+        outputs: h.step_outputs ?? {},
+      }));
+      const latest = iterations.at(-1);
+      const inputs: Record<string, unknown> = latest?.inputs ?? {};
+      const outputs: Record<string, unknown> = latest?.outputs ?? {};
       const hasContent =
         Object.keys(inputs).length > 0 ||
         Object.keys(outputs).length > 0 ||
@@ -289,6 +309,7 @@ export class ExecutionDetailsModalComponent implements OnInit {
         lastError,
         inputs,
         outputs,
+        iterations,
         hasContent,
         isExpanded: expanded.has(stepId),
       };
@@ -492,21 +513,14 @@ export class ExecutionDetailsModalComponent implements OnInit {
 
   resolveMediaUrls(): void {
     const wf = this.workflowSignal();
-    const steps = this.stepViewModels();
-    if (!wf || steps.length === 0) return;
+    const entries = this.mergedStepEntries();
+    if (!wf || entries.length === 0) return;
 
     const stepTypeMap = new Map<string, NodeTypes | string>();
     wf.steps?.forEach(s => stepTypeMap.set(s.stepId, s.type));
 
-    const entriesForResolution: StepEntry[] = steps.map(s => ({
-      step_id: s.stepId,
-      state: s.status as StepEntry['state'],
-      step_inputs: s.inputs,
-      step_outputs: s.outputs,
-    }));
-
     this.mediaResolutionService.resolveMediaUrls(
-      entriesForResolution,
+      entries,
       stepTypeMap,
       this.mediaUrlMap,
     );
