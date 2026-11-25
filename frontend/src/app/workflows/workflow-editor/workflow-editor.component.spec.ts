@@ -2007,8 +2007,8 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       discardPeriodicTasks();
     }));
 
-    it('does nothing in EditorMode.Run (read-only)', () => {
-      component.mode = EditorMode.Run;
+    it('does nothing in read-only mode', () => {
+      component.readonly.set(true);
       const updateEdgesSpy = spyOn(editorInternals, 'updateEdges');
       const saveHistoryStateSpy = spyOn(component, 'saveHistoryState');
 
@@ -2022,8 +2022,8 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     });
   });
 
-  describe('step card mode', () => {
-    it('passes the run mode to the step cards', () => {
+  describe('step card readonly state', () => {
+    it('passes the readonly state to the step cards', () => {
       formService.addStep(NodeTypes.IMAGE, {
         stepId: 'image_step_mode',
         type: NodeTypes.IMAGE,
@@ -2032,14 +2032,14 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         settings: {},
       });
       component.isLoading = false;
-      component.mode = EditorMode.Run;
+      component.readonly.set(true);
       fixture.detectChanges();
 
       const stepCard = fixture.nativeElement.querySelector(
         'app-generic-step[data-node-id="image_step_mode"]',
-      ) as (HTMLElement & {mode: EditorMode}) | null;
+      ) as (HTMLElement & {readonly: boolean}) | null;
       expect(stepCard).not.toBeNull();
-      expect(stepCard?.mode).toBe(EditorMode.Run);
+      expect(stepCard?.readonly).toBeTrue();
     });
   });
 
@@ -2538,6 +2538,314 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         [3],
         ACTIVE_WORKSPACE_ID,
       );
+    });
+  });
+
+  describe('Read-only mode', () => {
+    type EditorWithProtected = WorkflowEditorComponent & {
+      navigateToUrl: (url: string) => void;
+      draggingNodeId: string | null;
+      currentTransform: {x: number; y: number; k: number};
+      displayedWorkflow: DynamicStepRecord | null;
+    };
+
+    const getEditor = (): EditorWithProtected =>
+      component as unknown as EditorWithProtected;
+
+    it('enters read-only mode with disabled pristine form when runId query param is present', () => {
+      const route = TestBed.inject(ActivatedRoute) as unknown as {
+        queryParamMap: Observable<{get: (key: string) => string | null}>;
+        paramMap: Observable<{get: (key: string) => string | null}>;
+      };
+      route.paramMap = of({
+        get: (key: string) => (key === 'id' ? 'wf-1' : null),
+      });
+      route.queryParamMap = of({
+        get: (key: string) => (key === 'runId' ? 'run-99' : null),
+      });
+
+      component.ngOnInit();
+
+      expect(component.isReadOnly).toBeTrue();
+      expect(component.workflowForm.disabled).toBeTrue();
+      expect(component.workflowForm.pristine).toBeTrue();
+    });
+
+    it('never enters read-only mode in Create mode', () => {
+      expect(component.mode).toBe(EditorMode.Create);
+      expect(component.isReadOnly).toBeFalse();
+      expect(component.workflowForm.enabled).toBeTrue();
+    });
+
+    it('enters read-only mode after executeWorkflow succeeds in openRunModal', () => {
+      const dialog = TestBed.inject(MatDialog);
+      const workflowService = TestBed.inject(WorkflowService);
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-exec-1';
+      (dialog.open as jasmine.Spy).and.returnValue({
+        afterClosed: () => of({prompt: 'hello'}),
+      });
+      (workflowService.executeWorkflow as jasmine.Spy).and.returnValue(
+        of({execution_id: 'exec-1'}),
+      );
+
+      component.openRunModal();
+
+      expect(component.isReadOnly).toBeTrue();
+      expect(component.workflowForm.disabled).toBeTrue();
+    });
+
+    it('stays editable when executeWorkflow fails or run modal is cancelled', () => {
+      const dialog = TestBed.inject(MatDialog);
+      const workflowService = TestBed.inject(WorkflowService);
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-exec-2';
+
+      (dialog.open as jasmine.Spy).and.returnValue({
+        afterClosed: () => of(null),
+      });
+      component.openRunModal();
+      expect(component.isReadOnly).toBeFalse();
+
+      (dialog.open as jasmine.Spy).and.returnValue({
+        afterClosed: () => of({prompt: 'hello'}),
+      });
+      (workflowService.executeWorkflow as jasmine.Spy).and.returnValue(
+        throwError(() => new Error('Run failed')),
+      );
+      component.openRunModal();
+      expect(component.isReadOnly).toBeFalse();
+    });
+
+    it('hides Templates/Run/Save and shows Edit workflow button that calls navigateToUrl', () => {
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-edit-42';
+      component.isLoading = false;
+      component.showWelcomeView = false;
+      component.readonly.set(true);
+      fixture.detectChanges();
+
+      const hostEl = fixture.nativeElement as HTMLElement;
+      const editBtn = hostEl.querySelector(
+        '#workflow-edit-btn',
+      ) as HTMLElement | null;
+      expect(editBtn).not.toBeNull();
+      expect(hostEl.querySelector('#workflow-run-btn')).toBeNull();
+      expect(hostEl.querySelector('#workflow-save-btn')).toBeNull();
+      expect(hostEl.querySelector('#workflow-templates-btn')).toBeNull();
+
+      const navigateSpy = spyOn(getEditor(), 'navigateToUrl');
+      component.onEditWorkflow();
+      expect(navigateSpy).toHaveBeenCalledOnceWith(
+        '/workflows/edit/wf-edit-42',
+      );
+    });
+
+    it('keeps user-input node visible with add/remove disabled in read-only mode', () => {
+      component.isLoading = false;
+      component.showWelcomeView = false;
+      component.addOutput();
+      component.readonly.set(true);
+      fixture.detectChanges();
+
+      const hostEl = fixture.nativeElement as HTMLElement;
+      const userInputNode = hostEl.querySelector('.user-input-node');
+      expect(userInputNode).not.toBeNull();
+      expect(userInputNode?.classList.contains('readonly-node')).toBeTrue();
+
+      const addParamBtn = userInputNode?.querySelector(
+        '.add-output-btn',
+      ) as HTMLButtonElement | null;
+      const removeParamBtn = userInputNode?.querySelector(
+        '.definition-row button[color="warn"]',
+      ) as HTMLButtonElement | null;
+      expect(addParamBtn?.disabled).toBeTrue();
+      expect(removeParamBtn?.disabled).toBeTrue();
+    });
+
+    it('keeps Fit View enabled and disables Undo, Redo, and Add Node in read-only mode', () => {
+      component.isLoading = false;
+      component.showWelcomeView = false;
+      component.historyStack = ['s0', 's1', 's2'];
+      component.historyIndex = 1;
+      component.readonly.set(true);
+      fixture.detectChanges();
+
+      const hostEl = fixture.nativeElement as HTMLElement;
+      const fitViewBtn = hostEl.querySelector(
+        '#workflow-fit-view-btn',
+      ) as HTMLButtonElement | null;
+      const undoBtn = hostEl.querySelector(
+        '#workflow-undo-btn',
+      ) as HTMLButtonElement | null;
+      const redoBtn = hostEl.querySelector(
+        '#workflow-redo-btn',
+      ) as HTMLButtonElement | null;
+      const addNodeBtn = hostEl.querySelector('#workflow-add-node-btn');
+
+      expect(fitViewBtn?.disabled).toBeFalse();
+      expect(undoBtn?.disabled).toBeTrue();
+      expect(redoBtn?.disabled).toBeTrue();
+      expect(addNodeBtn?.hasAttribute('disabled')).toBeTrue();
+    });
+
+    it('toggles historySidebarStep on step click in read-only mode and is a no-op in edit mode', () => {
+      formService.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'step_click_1',
+        type: NodeTypes.GENERATE_TEXT,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      component.executionEntries.set([
+        {
+          step_id: 'step_click_1',
+          state: StepStatusEnum.COMPLETED,
+          step_inputs: {},
+          step_outputs: {},
+        } as StepEntry,
+      ]);
+
+      component.readonly.set(false);
+      component.onStepClick(0, 'step_click_1');
+      expect(component.historySidebarStep()).toBeNull();
+
+      component.readonly.set(true);
+      component.onStepClick(0, 'step_click_1');
+      expect(component.historySidebarStep()?.stepId).toBe('step_click_1');
+
+      component.onStepClick(0, 'step_click_1');
+      expect(component.historySidebarStep()).toBeNull();
+    });
+
+    it('ignores node drag in read-only mode and outside .step-header, and drags from .step-header in edit mode', () => {
+      const card = document.createElement('div');
+      const header = document.createElement('div');
+      header.className = 'step-header';
+      const body = document.createElement('div');
+      body.className = 'step-body';
+      card.appendChild(header);
+      card.appendChild(body);
+      document.body.appendChild(card);
+
+      try {
+        const makeEvent = (target: HTMLElement): MouseEvent =>
+          ({
+            target,
+            currentTarget: card,
+            clientX: 100,
+            clientY: 100,
+            stopPropagation: jasmine.createSpy('stopPropagation'),
+          }) as unknown as MouseEvent;
+
+        component.readonly.set(true);
+        component.onNodeMouseDown(makeEvent(header), 'step_1');
+        expect(getEditor().draggingNodeId).toBeNull();
+
+        component.readonly.set(false);
+        component.onNodeMouseDown(makeEvent(body), 'step_1');
+        expect(getEditor().draggingNodeId).toBeNull();
+
+        component.onNodeMouseDown(makeEvent(header), 'step_1');
+        expect(getEditor().draggingNodeId).toBe('step_1');
+      } finally {
+        card.remove();
+      }
+    });
+
+    it('does not change currentTransform on canvas double-click', () => {
+      component.isLoading = false;
+      component.showWelcomeView = false;
+      fixture.detectChanges();
+
+      const canvas = fixture.nativeElement.querySelector(
+        '.canvas-content',
+      ) as HTMLElement | null;
+      const before = {...getEditor().currentTransform};
+      canvas?.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+
+      expect(getEditor().currentTransform).toEqual(before);
+    });
+
+    it('shows snapshot mismatch banner when snapshot differs, hides when same or missing, and hides on dismiss', () => {
+      const workflowService = TestBed.inject(WorkflowService);
+      component.isLoading = false;
+      component.showWelcomeView = false;
+      component.workflowId = 'wf-snap-1';
+      const currentWorkflow: DynamicStepRecord = {
+        steps: [
+          {
+            stepId: 'step_1',
+            type: NodeTypes.GENERATE_TEXT,
+            inputs: {},
+            settings: {model: 'gemini-2.5-flash'},
+          },
+        ],
+      };
+      getEditor().displayedWorkflow = currentWorkflow;
+
+      // Snapshot differs -> banner shown
+      (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+        of({
+          id: 'run-diff',
+          status: WorkflowRunStatusEnum.COMPLETED,
+          step_entries: [],
+          workflow_snapshot: {
+            steps: [
+              {
+                stepId: 'step_1',
+                type: NodeTypes.GENERATE_TEXT,
+                inputs: {},
+                settings: {model: 'gemini-2.0-flash'},
+              },
+            ],
+          },
+        }),
+      );
+      component.onExecutionSelected('run-diff');
+      fixture.detectChanges();
+
+      const hostEl = fixture.nativeElement as HTMLElement;
+      expect(component.snapshotMismatch()).toBeTrue();
+      expect(
+        hostEl.querySelector('#workflow-snapshot-mismatch-banner'),
+      ).not.toBeNull();
+
+      // Dismiss banner -> hidden
+      const dismissBtn = hostEl.querySelector(
+        '#dismiss-snapshot-mismatch-banner-btn',
+      ) as HTMLButtonElement | null;
+      dismissBtn?.click();
+      fixture.detectChanges();
+      expect(component.snapshotMismatch()).toBeFalse();
+      expect(
+        hostEl.querySelector('#workflow-snapshot-mismatch-banner'),
+      ).toBeNull();
+
+      // Snapshot matches -> hidden
+      (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+        of({
+          id: 'run-same',
+          status: WorkflowRunStatusEnum.COMPLETED,
+          step_entries: [],
+          workflow_snapshot: currentWorkflow,
+        }),
+      );
+      component.onExecutionSelected('run-same');
+      fixture.detectChanges();
+      expect(component.snapshotMismatch()).toBeFalse();
+
+      // Snapshot missing -> hidden
+      (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+        of({
+          id: 'run-empty',
+          status: WorkflowRunStatusEnum.COMPLETED,
+          step_entries: [],
+        }),
+      );
+      component.onExecutionSelected('run-empty');
+      fixture.detectChanges();
+      expect(component.snapshotMismatch()).toBeFalse();
     });
   });
 });

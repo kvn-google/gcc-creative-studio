@@ -236,7 +236,11 @@
     border-bottom: 1px solid var(--border-color, #333);
     border-top-left-radius: 0.5rem;
     border-top-right-radius: 0.5rem;
-    cursor: move;
+    cursor: grab;
+
+    &:active {
+      cursor: grabbing;
+    }
 
     .step-title {
       display: flex;
@@ -259,6 +263,16 @@
   .step-content {
     padding: 16px;
   }
+
+  &.readonly-node {
+    .step-header {
+      cursor: default;
+
+      &:active {
+        cursor: default;
+      }
+    }
+  }
 }
 
 .port.output-port {
@@ -274,9 +288,15 @@
   transform: translate(50%, -50%);
   top: 50%;
 
-  &:hover {
+  &:hover:not(.port-disabled) {
     background-color: #bee3f8;
     transform: translateY(-50%) scale(1.2);
+  }
+
+  &.port-disabled {
+    opacity: 0.35;
+    cursor: default;
+    pointer-events: none;
   }
 
   &::after {
@@ -327,9 +347,16 @@
       box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
       transition: all 0.2s ease;
 
-      &:hover {
+      &:hover:not(:disabled) {
         transform: scale(0.95);
         background-color: var(--background-hover);
+      }
+
+      &:disabled,
+      &[disabled] {
+        opacity: 0.4;
+        cursor: not-allowed;
+        pointer-events: none;
       }
     }
   }
@@ -340,6 +367,12 @@
 
     button {
       box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    studio-button[disabled] {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
     }
   }
 }
