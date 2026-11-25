@@ -46,6 +46,7 @@ import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
 } from '../../utils/handleMessageSnackbar';
+import {isSameDefinition} from '../utils/workflow-definition.util';
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
   AvailableOutput,
@@ -152,6 +153,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   NodeTypes = NodeTypes;
   workflowId: string | null = null;
   runId: string | null = null;
+  readonly readonly = signal<boolean>(false);
+  readonly snapshotMismatch = signal<boolean>(false);
 
   // --- Data ---
   workflow: WorkflowModel | null = null;
@@ -538,6 +541,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.returnUrl = params.get('returnUrl');
         const selectedRunId = params.get('runId') || params.get('executionId');
         if (selectedRunId) {
+          this.enterReadOnlyMode();
           this.initialExecutionId = selectedRunId;
           if (this.workflowId && this.displayedWorkflow) {
             this.onExecutionSelected(selectedRunId);
@@ -562,14 +566,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .pipe(
         tap(() => (this.isLoading = true)),
         switchMap(params => {
-          this.runId = params.get('runId');
           this.workflowId = params.get('workflowId');
-          if (this.runId) {
-            this.mode = EditorMode.Run;
-            // TODO: Create and use a WorkflowRunService
-            // return this.workflowRunService.getWorkflowRun(this.runId);
-            return of(null); // Placeholder
-          } else if (this.workflowId) {
+          if (this.workflowId) {
             this.mode = EditorMode.Edit;
             return this.workflowService.getWorkflowById(this.workflowId);
           } else {
@@ -580,21 +578,15 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       )
       .subscribe({
         next: (data: WorkflowModel | WorkflowRunModel | null) => {
-          if (this.mode === EditorMode.Run) {
-            this.isInitialWelcome.set(false);
-            this.workflowRun = data ? (data as WorkflowRunModel) : null;
-            this.displayedWorkflow = this.workflowRun?.workflowSnapshot ?? null;
-            this.workflowId = this.workflowRun?.id ?? null;
-            if (this.displayedWorkflow) {
-              this.loadAndSetData();
-            }
-            this.workflowForm.disable(); // Read-only mode
-          } else if (this.mode === EditorMode.Edit) {
+          if (this.mode === EditorMode.Edit) {
             this.isInitialWelcome.set(false);
             this.workflow = data as WorkflowModel;
             this.displayedWorkflow = this.workflow;
             if (this.displayedWorkflow) {
               this.loadAndSetData();
+              if (this.isReadOnly) {
+                this.enterReadOnlyMode();
+              }
               if (this.initialExecutionId) {
                 this.onExecutionSelected(this.initialExecutionId);
               }
@@ -690,9 +682,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           );
       });
 
-    d3.select(this.canvasContainer.nativeElement).call(
-      this.zoomBehavior as any,
-    );
+    d3.select(this.canvasContainer.nativeElement)
+      .call(this.zoomBehavior as any)
+      .on('dblclick.zoom', null);
   }
 
   // --- Canvas Logic ---
@@ -758,6 +750,13 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   onStepClick(index: number, stepId: string): void {
     this.selectedStepIndex = index;
     this.selectedNodeId = stepId;
+    if (!this.isReadOnly) {
+      return;
+    }
+    if (this.historySidebarStep()?.stepId === stepId) {
+      this.historySidebarStep.set(null);
+      return;
+    }
     if (!this.getStepExecution(stepId)) {
       this.historySidebarStep.set(null);
       return;
@@ -806,14 +805,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     if (this.isReadOnly) return;
     this.selectedNodeId = stepId;
 
-    // Check if clicked on a port or header buttons (avoid dragging if clicking those)
+    // Only allow dragging from the step header, excluding header buttons
     const target = event.target as HTMLElement;
-    if (
-      target.closest('.port') ||
-      target.closest('button') ||
-      target.closest('input') ||
-      target.closest('.mat-mdc-select')
-    ) {
+    if (!target.closest('.step-header') || target.closest('button')) {
       return;
     }
 
@@ -936,6 +930,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     outputName: string;
     mouseEvent: MouseEvent;
   }): void {
+    if (this.isReadOnly) {
+      return;
+    }
     const sourceType = this.getOutputType(event.stepId, event.outputName);
     this.dragSourcePort = {
       stepId: event.stepId,
@@ -1463,16 +1460,38 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   get isReadOnly(): boolean {
-    return this.mode === EditorMode.Run;
+    return this.readonly();
+  }
+
+  private enterReadOnlyMode(): void {
+    if (!this.readonly()) {
+      this.readonly.set(true);
+    }
+    this.workflowForm?.disable({emitEvent: false});
+  }
+
+  dismissSnapshotMismatchBanner(): void {
+    this.snapshotMismatch.set(false);
+  }
+
+  onEditWorkflow(): void {
+    if (!this.workflowId || !isPlatformBrowser(this.platformId)) return;
+    this.navigateToUrl(`/workflows/edit/${this.workflowId}`);
+  }
+
+  protected navigateToUrl(url: string): void {
+    window.location.assign(url);
   }
 
   // ... (rest of the component: ngOnDestroy, initForm, addStepToForm, etc. remains the same)
 
   addOutput(name = '', type = 'text', id?: string): void {
+    if (this.isReadOnly) return;
     this.formService.addOutputDefinition(name, type, id);
   }
 
   removeOutput(index: number): void {
+    if (this.isReadOnly) return;
     this.formService.removeOutputDefinition(index);
   }
 
@@ -2331,6 +2350,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.isLoading = true;
         this.workflowService.executeWorkflow(workflowId, result).subscribe({
           next: res => {
+            this.enterReadOnlyMode();
             const createdRunId =
               res.run_id ??
               res.runId ??
@@ -2374,6 +2394,13 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .subscribe({
         next: details => {
           this.handleExecutionUpdate(details);
+          const snapshot =
+            details.workflow_snapshot ?? details.workflowSnapshot ?? null;
+          this.snapshotMismatch.set(
+            !!snapshot &&
+              !!this.displayedWorkflow &&
+              !isSameDefinition(snapshot, this.displayedWorkflow),
+          );
           this.isLoading = false;
 
           const status = details.status ?? details.state;
