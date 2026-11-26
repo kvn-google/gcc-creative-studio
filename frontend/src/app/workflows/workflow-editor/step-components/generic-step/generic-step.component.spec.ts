@@ -2765,4 +2765,23 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       }));
     });
   });
+
+  describe('step header drag cursor', () => {
+    const queryHeader = (): HTMLElement =>
+      fixture.debugElement.query(By.css('.step-header')).nativeElement;
+
+    it('should show the move cursor on the header when editable', () => {
+      component.readonly = false;
+      fixture.detectChanges();
+
+      expect(getComputedStyle(queryHeader()).cursor).toBe('move');
+    });
+
+    it('should not show the move cursor on the header when read-only', () => {
+      component.readonly = true;
+      fixture.detectChanges();
+
+      expect(getComputedStyle(queryHeader()).cursor).not.toBe('move');
+    });
+  });
 });

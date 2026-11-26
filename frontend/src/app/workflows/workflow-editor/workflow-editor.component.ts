@@ -1488,11 +1488,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   addOutput(name = '', type = 'text', id?: string): void {
     if (this.isReadOnly) return;
     this.formService.addOutputDefinition(name, type, id);
+    // Programmatic FormArray push/removeAt never marks the form dirty.
+    this.workflowForm.markAsDirty();
   }
 
   removeOutput(index: number): void {
     if (this.isReadOnly) return;
     this.formService.removeOutputDefinition(index);
+    this.workflowForm.markAsDirty();
   }
 
   // syncOutputs and updateAvailableOutputs removed, handled by service

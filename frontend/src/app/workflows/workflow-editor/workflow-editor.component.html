@@ -30,9 +30,19 @@
     <div class="in-line-wrapper">
       <!-- Breadcrumbs/Title Area -->
       <div class="title-group flex-grow">
-        <div *ngIf="isReadOnly; else editableHeader">
-          <h1 class="page-title">{{ displayedWorkflow?.name }}</h1>
-          <p class="text-sm text-neutral-400 mt-1">
+        <div *ngIf="isReadOnly; else editableHeader" class="readonly-header">
+          <h1
+            id="workflow-readonly-title"
+            class="page-title truncate-line"
+            [matTooltip]="displayedWorkflow?.name ?? ''"
+          >
+            {{ displayedWorkflow?.name }}
+          </h1>
+          <p
+            id="workflow-readonly-description"
+            class="text-sm text-neutral-400 mt-1 truncate-line"
+            [matTooltip]="displayedWorkflow?.description ?? ''"
+          >
             {{ displayedWorkflow?.description }}
           </p>
         </div>
@@ -77,6 +87,7 @@
           *ngIf="isReadOnly"
           mat-raised-button
           id="workflow-edit-btn"
+          class="workflow-edit-btn"
           (click)="onEditWorkflow()"
         >
           <mat-icon class="mr-1">edit</mat-icon>
@@ -169,7 +180,7 @@
   <div
     *ngIf="conflictBannerMessage() as conflictMsg"
     id="runs-in-flight-conflict-banner"
-    class="mx-6 mt-2 px-4 py-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-4 z-30"
+    class="snapshot-mismatch-banner mx-6 mt-2 px-4 py-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-4 z-30"
   >
     <div class="flex items-center gap-2 text-sm">
       <mat-icon class="text-amber-400">warning_amber</mat-icon>

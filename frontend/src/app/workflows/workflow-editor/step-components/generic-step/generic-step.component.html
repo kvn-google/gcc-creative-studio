@@ -25,7 +25,7 @@
     stepForm.get('status')?.value === StepStatusEnum.RUNNING
   "
 >
-  <div class="step-header">
+  <div class="step-header" [class.step-header-draggable]="!readonly">
     <div class="step-title">
       <mat-icon>{{ localConfig.icon }}</mat-icon>
       <span>{{ localConfig.title }}</span>

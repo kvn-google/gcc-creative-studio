@@ -2858,4 +2858,60 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(component.snapshotMismatch()).toBeFalse();
     });
   });
+
+  describe('Workflow parameter dirty tracking', () => {
+    it('should mark a saved workflow dirty when a parameter is added', () => {
+      component.workflowForm.markAsPristine();
+
+      component.addOutput('Brand Name', 'text');
+
+      expect(component.workflowForm.dirty).toBeTrue();
+    });
+
+    it('should mark a saved workflow dirty when a parameter is removed', () => {
+      component.addOutput('Brand Name', 'text');
+      component.workflowForm.markAsPristine();
+      const lastIndex = component.outputDefinitionsArray.length - 1;
+
+      component.removeOutput(lastIndex);
+
+      expect(component.workflowForm.dirty).toBeTrue();
+    });
+  });
+
+  describe('Read-only header', () => {
+    it('should truncate the title and description and expose the full text as tooltips', () => {
+      const longName = 'A very long workflow name '.repeat(10).trim();
+      const longDescription = 'A very long description '.repeat(10).trim();
+      component.showWelcomeView = false;
+      component.displayedWorkflow = {
+        ...(component.displayedWorkflow ?? {}),
+        name: longName,
+        description: longDescription,
+      } as typeof component.displayedWorkflow;
+      (component as any).readonly.set(true);
+      fixture.detectChanges();
+
+      const title = fixture.debugElement.query(
+        By.css('#workflow-readonly-title'),
+      );
+      const description = fixture.debugElement.query(
+        By.css('#workflow-readonly-description'),
+      );
+      const titleStyle = getComputedStyle(title.nativeElement);
+      const descriptionStyle = getComputedStyle(description.nativeElement);
+
+      expect(titleStyle.whiteSpace).toBe('nowrap');
+      expect(titleStyle.textOverflow).toBe('ellipsis');
+      expect(descriptionStyle.whiteSpace).toBe('nowrap');
+      expect(descriptionStyle.textOverflow).toBe('ellipsis');
+      expect(title.injector.get(MatTooltip).message).toBe(longName);
+      expect(description.injector.get(MatTooltip).message).toBe(
+        longDescription,
+      );
+
+      const editBtn = fixture.debugElement.query(By.css('#workflow-edit-btn'));
+      expect(getComputedStyle(editBtn.nativeElement).whiteSpace).toBe('nowrap');
+    });
+  });
 });
