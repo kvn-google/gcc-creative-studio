@@ -106,7 +106,9 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     };
 
     const routerMock = {
-      navigate: jasmine.createSpy('navigate'),
+      navigate: jasmine
+        .createSpy('navigate')
+        .and.returnValue(Promise.resolve(true)),
     };
 
     const workflowServiceMock = {
@@ -2599,6 +2601,32 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
       expect(component.isReadOnly).toBeTrue();
       expect(component.workflowForm.disabled).toBeTrue();
+    });
+
+    it('syncs the URL to the new run after executeWorkflow succeeds', () => {
+      const dialog = TestBed.inject(MatDialog);
+      const workflowService = TestBed.inject(WorkflowService);
+      const navigateSpy = TestBed.inject(Router).navigate as jasmine.Spy;
+      navigateSpy.calls.reset();
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-exec-2';
+      (dialog.open as jasmine.Spy).and.returnValue({
+        afterClosed: () => of({prompt: 'hello'}),
+      });
+      (workflowService.executeWorkflow as jasmine.Spy).and.returnValue(
+        of({run_id: 'run-42'}),
+      );
+
+      component.openRunModal(component.workflowId, {});
+
+      expect(navigateSpy).toHaveBeenCalledWith(
+        [],
+        jasmine.objectContaining({
+          queryParams: {runId: 'run-42', executionId: 'run-42'},
+          queryParamsHandling: 'merge',
+          replaceUrl: true,
+        }),
+      );
     });
 
     it('stays editable when executeWorkflow fails or run modal is cancelled', () => {

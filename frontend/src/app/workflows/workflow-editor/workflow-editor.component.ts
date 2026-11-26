@@ -543,7 +543,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         if (selectedRunId) {
           this.enterReadOnlyMode();
           this.initialExecutionId = selectedRunId;
-          if (this.workflowId && this.displayedWorkflow) {
+          // Skip the refetch when the URL was just synced to a run this
+          // component started and is already polling (see openRunModal).
+          const alreadyTracking =
+            selectedRunId === this.currentExecutionId &&
+            !!this.pollingSubscription;
+          if (this.workflowId && this.displayedWorkflow && !alreadyTracking) {
             this.onExecutionSelected(selectedRunId);
           }
         } else {
@@ -2378,6 +2383,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             );
             if (createdRunId) {
               this.startPollingExecution(workflowId, createdRunId);
+              this.syncRunUrl(createdRunId);
             }
           },
           error: err => {
@@ -2389,6 +2395,22 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         });
       }
     });
+  }
+
+  /**
+   * Reflects a freshly started run in the URL (same shape as the execution
+   * history "snapshot" links) so a reload or shared link reopens the run in
+   * read-only mode instead of the editable workflow.
+   */
+  private syncRunUrl(runId: string): void {
+    void this.router
+      .navigate([], {
+        relativeTo: this.route,
+        queryParams: {runId, executionId: runId},
+        queryParamsHandling: 'merge',
+        replaceUrl: true,
+      })
+      .catch(err => console.error('Failed to update run URL', err));
   }
 
   onExecutionSelected(runOrExecutionId: string): void {
